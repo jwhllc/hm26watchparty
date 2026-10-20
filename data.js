@@ -141,8 +141,8 @@ const MENU = [
     ['buffet-3','Dinner buffet, three entrées','same as above with a third entrée',62,'pp'],
     ['soup','Add a soup','gumbo, bisque, tomato basil and more',5,'pp'],
   ]},
-  {key:'hourly', title:'Bar · hourly packages', kind:'bar', special:true, note:'Per guest on the guaranteed count. Includes soft drinks, water and bartenders (one per 100 guests). Packages stop at 4 hours.', items:[]},
-  {key:'hosted', title:'Bar · pay per drink', kind:'bar', note:'The host pays for each drink poured. Bartenders are $150 each for 2 hours, plus $25 per extra hour; set them under the hourly packages.', items:[
+  {key:'bar', title:'Bar plan', kind:'bar', special:true, note:'Set the bar hour by hour: open bar (the campaign pays), cash bar (guests pay) or closed. Price the open hours per drink with a cap, or as an hourly package.', items:[]},
+  {key:'hosted', title:'Extra hosted drinks', kind:'bar', note:'Specific drinks on top of the bar plan, like a round for a toast. The bar plan already estimates open-bar drinks, so only add extras here.', items:[
     ['h-pref','Preferred spirits',"Tito's · Tanqueray · Bacardi · Dewar's · Maker's Mark · Jack Daniel's · Hennessy VS · Patrón",10,'drink'],
     ['h-prem','Premium spirits','Grey Goose · Bombay Sapphire · Johnnie Walker Black · Knob Creek · Crown Royal · Hennessy VSOP · Casamigos',12,'drink'],
     ['h-wine','House wine','pinot grigio · chardonnay · red blend · cabernet · Mumm Napa brut',10,'drink'],
