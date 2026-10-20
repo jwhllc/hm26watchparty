@@ -179,6 +179,11 @@
       <label class="chk"><input type="checkbox" id="mPicked"> Picked only</label>
       <button class="btn ghost" id="copyOrder" type="button">Copy order for Elizabeth</button>
     </div>
+    <div class="print-tools" id="printTools" hidden>
+      <button class="btn primary sm" id="printPicks" type="button">Print or save picks as PDF</button>
+      <button class="btn ghost sm" id="printAll" type="button">Print full menu</button>
+      <span class="hint">In the print window, choose "Save as PDF" as the destination.</span>
+    </div>
     <div class="jump" id="mJump" aria-label="Jump to a menu section"></div>
     <div id="menuList"></div>
     <p class="hint mt22">From the Renaissance Meeting + Event Menus, 2026 edition. Evening sections only; breakfast, lunch and plated dinners are left out. Prices can change without notice.</p>
@@ -230,7 +235,7 @@
       </div>
     </div>
     <div class="callouts">
-      <div class="callout"><b>Hourly bars bill per head</b>Packages are per person on the guaranteed count and stop at 4 hours. A 4-hour premium bar is $14,700 for 300 or $7,350 for 150, before service and tax. For a come-and-go night, ask Elizabeth which count she'd bill, and compare drink tickets or a cash bar.</div>
+      <div class="callout"><b>Open bar, then cash</b>Set the bar hour by hour in the Bar plan on the Menu tab. Pay-per-drink with a cap suits a come-and-go crowd: you pay for drinks poured, not heads. Hourly packages bill every guest on the count you give the hotel.</div>
       <div class="callout"><b>Outside vendors need insurance</b>Balloon, band and photo vendors need a certificate of insurance naming the hotel and its owner, $1 million minimum, on file before they can load in.</div>
       <div class="callout"><b>Balloons</b>Decor needs hotel approval and must meet fire code. Nothing tied or taped to walls without approval, and confetti-filled balloons trigger the $600 cleaning fee.</div>
       <div class="callout"><b>AV prices aren't here yet</b>Elizabeth sent an AV price sheet on Sep 11 with the menus. Enter those numbers on the two AV lines, or send the sheet over and they can be added.</div>
@@ -354,6 +359,7 @@
   <p>Built from the Renaissance group sales agreement (ref M-WQ83ATW, signed Oct 6), the Nov 3 event email thread (Aug 7 to Oct 12), and the hotel's 2026 menus. Dollar figures are estimates until the final event order.</p>
 </footer>
 <div class="toasts" id="toasts" aria-live="polite"></div>
+<div id="printSheet" aria-hidden="true"></div>
 
 <script src="data.js"></script>
 <script src="seed.js"></script>
