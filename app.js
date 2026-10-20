@@ -8,7 +8,17 @@ const PANELS = ['board','guests','menu','budget'];
 const DOORS = Date.UTC(2026,10,3,23,0,0);     // 5:00 PM CST, Nov 3
 const WRAP_UP = Date.UTC(2026,10,4,6,0,0);    // midnight CST
 const SVC = 0.24, TAX = 0.125, MIN_FB = 5000, DEPOSIT = 767.30, BOARDROOM = 500;
-const DEFAULT_SETTINGS = {headcount:300, peak:null, cap:0, target:0, barHours:7, bartenders:null, cashiers:0};
+const BAR_SLOTS = ['5 PM','6 PM','7 PM','8 PM','9 PM','10 PM','11 PM'];   // one-hour blocks; the bar closes at midnight
+const SLOT_START = [17,18,19,20,21,22,23];
+const DEFAULT_BAR = {slots:['cash','cash','cash','cash','cash','cash','cash'], basis:'drink', tier:'bw', billOn:'total', guests:null, dph:1, avg:8, cap:0};
+const BAR_PRESETS = [
+  {label:'Cash all night',        slots:['cash','cash','cash','cash','cash','cash','cash']},
+  {label:'Open 5–7, then cash',   slots:['open','open','cash','cash','cash','cash','cash']},
+  {label:'Open 8–10 for results', slots:['cash','cash','cash','open','open','cash','cash']},
+  {label:'Open all night',        slots:['open','open','open','open','open','open','open']},
+  {label:'No bar',                slots:['off','off','off','off','off','off','off']},
+];
+const DEFAULT_SETTINGS = {headcount:300, peak:null, cap:0, target:0, bartenders:null, cashierCount:null, bar:DEFAULT_BAR};
 const OFF_MSG = 'The shared board, guest list, menu picks and budget load when this page is opened in Claude while signed in. The Venue and Flyer tabs work anywhere.';
 const LOCAL_WARN = "This browser isn't saving changes (a private window or blocked storage). Export a backup before you close the tab.";
 const RO_MSG = "You're viewing. Checking things off and editing need Contributor or Editor access from Josh.";
@@ -199,9 +209,17 @@ function cleanSettings(x){
   x = x || {};
   return {headcount:clamp(Math.round(num(x.headcount,300)),1,5000), cap:Math.max(0, num(x.cap,0)), target:Math.max(0, num(x.target,0)),
     peak:x.peak == null || x.peak === '' ? null : clamp(Math.round(num(x.peak,0)),1,5000),
-    barHours:clamp(Math.round(num(x.barHours,7)),1,12),
     bartenders:x.bartenders == null || x.bartenders === '' ? null : clamp(Math.round(num(x.bartenders,0)),0,20),
-    cashiers:clamp(Math.round(num(x.cashiers,0)),0,10)};
+    cashierCount:x.cashierCount == null || x.cashierCount === '' ? null : clamp(Math.round(num(x.cashierCount,0)),0,10),
+    bar:cleanBar(x.bar)};
+}
+function cleanBar(b){
+  b = (b && typeof b === 'object' && !Array.isArray(b)) ? b : {};
+  const slots = Array.isArray(b.slots) && b.slots.length === 7 ? b.slots.map(s => (s === 'open' || s === 'cash' || s === 'off') ? s : 'cash') : DEFAULT_BAR.slots.slice();
+  return {slots, basis:b.basis === 'package' ? 'package' : 'drink', tier:HOURLY.some(t => t.key === b.tier) ? b.tier : 'bw',
+    billOn:b.billOn === 'peak' ? 'peak' : 'total',
+    guests:b.guests == null || b.guests === '' ? null : clamp(Math.round(num(b.guests,0)),0,5000),
+    dph:clamp(num(b.dph,1),0,5), avg:clamp(num(b.avg,8),0,100), cap:Math.max(0, num(b.cap,0))};
 }
 
 /* ---------- budget math ---------- */
@@ -221,13 +239,9 @@ function defaultQty(item, hc){
 const staffFee = hours => 150 + 25*Math.max(0, hours-2);
 function budget(){
   const S = state.settings, hc = S.headcount, peak = S.peak || hc;
-  const lines = []; let food = 0, bar = 0, att = 0, carve = 0, pieces = 0, drinks = 0, hourly = null;
+  const lines = []; let food = 0, bar = 0, att = 0, carve = 0, pieces = 0, drinks = 0;
   for (const [id, p] of Object.entries(state.picks)){
-    if (id.startsWith('hourly-')){
-      const parts = id.split('-'); const t = HOURLY.find(x => x.key === parts[1]); const hrs = Number(parts[2]);
-      if (t && hrs >= 1 && hrs <= 4){ const cost = t.prices[hrs-1]*hc; hourly = {tier:t, hours:hrs, price:t.prices[hrs-1], cost}; bar += cost; }
-      continue;
-    }
+    if (id.startsWith('hourly-')) continue;   // older saves; open-bar packages now live in the bar plan
     const it = ITEMS[id]; if (!it) continue;
     const q = pickQty(it, p, hc), c = lineCost(it, q);
     lines.push({item:it, qty:q, cost:c});
@@ -237,9 +251,30 @@ function budget(){
     if (it.unit === 'pc50') pieces += q;
     if (it.unit === 'drink') drinks += q;
   }
-  const autoBt = (drinks > 0 && !hourly) ? Math.max(1, Math.ceil(peak/100)) : 0;
-  const bartenders = S.bartenders == null ? autoBt : S.bartenders;
-  const btFee = bartenders*staffFee(S.barHours), cashFee = S.cashiers*staffFee(S.barHours);
+  // Bar plan: each hour from 5 PM is open bar, cash bar or closed.
+  const P = S.bar, openN = P.slots.filter(s => s === 'open').length, cashN = P.slots.filter(s => s === 'cash').length;
+  const plan = {openN, cashN, basis:P.basis, cost:0, uncapped:0, drinksEst:0, capped:false, guests:0, tier:null, price:0, billed:0, over4:false};
+  if (openN){
+    if (P.basis === 'package'){
+      const t = HOURLY.find(x => x.key === P.tier) || HOURLY[0], step = t.prices[3] - t.prices[2];
+      plan.tier = t; plan.over4 = openN > 4;
+      plan.price = openN <= 4 ? t.prices[openN-1] : t.prices[3] + step*(openN-4);   // past 4 hours is an estimate
+      plan.billed = P.billOn === 'peak' ? peak : hc;
+      plan.cost = plan.price*plan.billed;
+    } else {
+      plan.guests = P.guests == null ? peak : P.guests;
+      plan.drinksEst = plan.guests*P.dph*openN; plan.uncapped = plan.drinksEst*P.avg;
+      plan.cost = P.cap > 0 ? Math.min(plan.uncapped, P.cap) : plan.uncapped; plan.capped = P.cap > 0 && plan.uncapped > P.cap;
+    }
+    bar += plan.cost;
+  }
+  const autoBt = Math.max(1, Math.ceil(peak/100));
+  let btHours = plan.basis === 'package' && openN ? cashN : openN + cashN;   // hourly packages include their own bartenders
+  if (!btHours && drinks > 0) btHours = 2;
+  const bartenders = btHours ? (S.bartenders == null ? autoBt : S.bartenders) : 0;
+  const btFee = btHours ? bartenders*staffFee(btHours) : 0;
+  const cashiers = cashN ? (S.cashierCount == null ? 1 : S.cashierCount) : 0;
+  const cashFee = cashiers*staffFee(cashN);
   const fb = food + bar, shortfall = Math.max(0, MIN_FB - fb);
   const hotelExp = state.expenses.filter(e => catOf(e.cat).hotel), hotelExpSum = hotelExp.reduce((a,e)=>a+e.amount,0);
   const outside = state.expenses.filter(e => !catOf(e.cat).hotel), outsideSum = outside.reduce((a,e)=>a+e.amount,0);
@@ -247,9 +282,9 @@ function budget(){
   const sub = fb + shortfall + fees + BOARDROOM + hotelExpSum;
   const svc = sub*SVC, tax = (sub+svc)*TAX, hotelTotal = sub + svc + tax;
   const all = hotelTotal + outsideSum;
-  return {hc, peak, lines, food, bar, fb, shortfall, att, carve, bartenders, autoBt, btFee, cashFee, fees, hotelExp, hotelExpSum,
+  return {hc, peak, lines, food, bar, fb, shortfall, att, carve, bartenders, autoBt, btHours, cashiers, plan, btFee, cashFee, fees, hotelExp, hotelExpSum,
     outside, outsideSum, sub, svc, tax, hotelTotal, balance:hotelTotal - DEPOSIT, all, perGuest: hc ? all/hc : 0,
-    pieces, drinks, hourly, cap:S.cap, target:S.target, unpriced:state.expenses.filter(e => !(e.amount > 0)).length};
+    pieces, drinks, cap:S.cap, target:S.target, unpriced:state.expenses.filter(e => !(e.amount > 0)).length};
 }
 
 /* ---------- stats ---------- */
@@ -470,7 +505,7 @@ function buildTasks(){
 }
 function renderBoard(){
   noteFor('#boardNote');
-  $$('.seg button').forEach(b => b.setAttribute('aria-pressed', b.dataset.view === state.view ? 'true' : 'false'));
+  $$('.board-head .seg button').forEach(b => b.setAttribute('aria-pressed', b.dataset.view === state.view ? 'true' : 'false'));
   $('#hideDone').checked = state.hideDone;
   renderStickers(stats());
   const box = $('#taskList');
@@ -616,31 +651,76 @@ function menuItem(it, hc){
     h('div',{class:'mi-price'}, priceLabel(it)),
     qty);
 }
-function hourlyBlock(B, hc){
-  const ro = !canWrite(), S = state.settings;
-  const picked = Object.keys(state.picks).find(k => k.startsWith('hourly-'));
-  const table = h('div',{class:'hourly'}, h('table',{class:'hg'},
-    h('thead',null, h('tr',null, h('th',{scope:'col'}, h('span',{class:'sr'},'Package')), [1,2,3,4].map(n => h('th',{scope:'col'}, `${n} ${plural(n,'hour','hours')}`)))),
-    h('tbody',null, HOURLY.map(t => h('tr',null, h('th',{scope:'row'}, t.label), t.prices.map((pr, i) => {
-      const id = `hourly-${t.key}-${i+1}`;
-      return h('td',null, h('button',{type:'button', 'aria-pressed':picked === id ? 'true' : 'false', 'aria-label':`${t.label} bar, ${i+1} ${plural(i+1,'hour','hours')}, $${pr} per guest`,
-        'data-fk':'hb-'+id, disabled:ro, onclick:() => pickHourly(id)}, '$' + pr));
-    }))))));
-  const info = [];
-  if (B.hourly){
-    info.push(h('p',{class:'mi-qty', style:'margin:10px 0 0'}, h('span',null, `${B.hourly.tier.label}, ${B.hourly.hours} ${plural(B.hourly.hours,'hour','hours')} × ${nf.format(hc)} guests`), h('span',{class:'mi-cost'}, '= ' + fmt0(B.hourly.cost))));
-    if (S.barHours > B.hourly.hours) info.push(h('p',{class:'hint'}, h('span',{class:'flag warn'}, 'Heads up'), ` The bar is set to stay open ${S.barHours} hours, but this package covers ${B.hourly.hours}. Ask Elizabeth to price the extra time.`));
-  } else info.push(h('p',{class:'hint'}, 'No hourly package picked. Tap a price to choose one, or use pay-per-drink below.'));
-  const btHint = S.bartenders == null ? `Auto (${B.autoBt})` : '';
-  const staff = h('div',{class:'staff'},
-    h('label',{class:'field'}, 'Bar open (hours)', h('input',{type:'number', min:1, max:12, step:1, value:S.barHours, 'data-fk':'s-hours', disabled:ro, onchange:e => saveSettings({barHours:e.target.value})})),
-    h('label',{class:'field'}, 'Bartenders', h('input',{type:'number', min:0, max:20, step:1, value:S.bartenders == null ? '' : S.bartenders, placeholder:btHint, 'data-fk':'s-bt', disabled:ro,
+function barSegments(){
+  const s = state.settings.bar.slots, out = [];
+  s.forEach((k, i) => { const last = out[out.length-1]; if (last && last.kind === k) last.b = SLOT_START[i] + 1; else out.push({kind:k, a:SLOT_START[i], b:SLOT_START[i] + 1}); });
+  return out;
+}
+function hourRange(a, b){ return b >= 24 ? `${a-12} PM–midnight` : `${a-12}–${b-12} PM`; }
+function rangesOf(kind){ return barSegments().filter(g => g.kind === kind).map(g => hourRange(g.a, g.b)).join(' and '); }
+function planText(){
+  const segs = barSegments();
+  if (segs.length === 1 && segs[0].kind === 'off') return 'No bar';
+  const word = {open:'open bar', cash:'cash bar', off:'bar closed'};
+  const t = segs.map(g => `${word[g.kind]} ${hourRange(g.a, g.b)}`).join(', then ');
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
+function saveBar(patch){ saveSettings({bar:Object.assign({}, state.settings.bar, patch)}); }
+function barPlanBlock(B){
+  const ro = !canWrite(), S = state.settings, P = S.bar, L = B.plan;
+  const next = {open:'cash', cash:'off', off:'open'}, word = {open:'Open', cash:'Cash', off:'Closed'}, long = {open:'open bar', cash:'cash bar', off:'bar closed'};
+  const presets = h('div',{class:'chips bp-presets', role:'group', 'aria-label':'Bar presets'},
+    BAR_PRESETS.map((p, i) => h('button',{type:'button', class:'chip', 'aria-pressed':p.slots.join() === P.slots.join() ? 'true' : 'false', 'data-fk':'bpp-'+i, disabled:ro,
+      onclick:() => saveBar({slots:p.slots.slice()})}, p.label)));
+  const track = h('div',{class:'bp-track', role:'group', 'aria-label':'Bar by the hour, 5 PM to midnight'},
+    P.slots.map((s, i) => h('button',{type:'button', class:'bp-slot bp-' + s, 'data-fk':'bps-'+i, disabled:ro,
+      'aria-label':`${BAR_SLOTS[i]} hour: ${long[s]}. Click to change.`, onclick:() => { const slots = P.slots.slice(); slots[i] = next[s]; saveBar({slots}); }},
+      h('span',{class:'bp-time'}, BAR_SLOTS[i]), h('span',{class:'bp-kind'}, word[s]))));
+  const basis = h('div',{class:'bp-basis'},
+    h('span',{class:'t-label'}, 'Price the open-bar hours'),
+    h('div',{class:'seg', role:'group', 'aria-label':'Price open-bar hours as'},
+      h('button',{type:'button', 'aria-pressed':P.basis === 'drink' ? 'true' : 'false', 'data-fk':'bpb-d', disabled:ro, onclick:() => saveBar({basis:'drink'})}, 'Pay per drink'),
+      h('button',{type:'button', 'aria-pressed':P.basis === 'package' ? 'true' : 'false', 'data-fk':'bpb-p', disabled:ro, onclick:() => saveBar({basis:'package'})}, 'Hourly package')));
+  const num0 = (v) => v == null ? '' : v;
+  const fields = P.basis === 'drink'
+    ? h('div',{class:'bp-fields'},
+        h('label',{class:'field'}, 'Guests at the bar', h('input',{type:'number', min:0, step:10, value:num0(P.guests), placeholder:`Peak (${nf.format(B.peak)})`, 'data-fk':'bpf-g', disabled:ro, onchange:e => saveBar({guests:e.target.value === '' ? null : e.target.value})})),
+        h('label',{class:'field'}, 'Drinks per guest per hour', h('input',{type:'number', min:0, max:5, step:0.25, value:P.dph, 'data-fk':'bpf-r', disabled:ro, onchange:e => saveBar({dph:e.target.value})})),
+        h('label',{class:'field'}, 'Average drink ($)', h('input',{type:'number', min:0, step:0.5, value:P.avg, 'data-fk':'bpf-a', disabled:ro, onchange:e => saveBar({avg:e.target.value})})),
+        h('label',{class:'field'}, 'Open-bar cap ($)', h('input',{type:'number', min:0, step:250, value:P.cap > 0 ? P.cap : '', placeholder:'No cap', 'data-fk':'bpf-c', disabled:ro, onchange:e => saveBar({cap:e.target.value})})),
+        h('p',{class:'hint full'}, 'Hosted prices: beer $5–7, wine and cocktails $10–12. A cap tells the hotel to switch to cash once you hit that amount.'))
+    : h('div',{class:'bp-fields'},
+        h('label',{class:'field span2'}, 'Package', h('select',{'data-fk':'bpf-t', disabled:ro, onchange:e => saveBar({tier:e.target.value})},
+          HOURLY.map(t => h('option',{value:t.key, selected:t.key === P.tier}, `${t.label} · $${t.prices[0]}–$${t.prices[3]} per guest`)))),
+        h('label',{class:'field span2'}, 'Bill on', h('select',{'data-fk':'bpf-o', disabled:ro, onchange:e => saveBar({billOn:e.target.value})},
+          h('option',{value:'total', selected:P.billOn === 'total'}, `Total guests (${nf.format(B.hc)})`),
+          h('option',{value:'peak', selected:P.billOn === 'peak'}, `Peak at once (${nf.format(B.peak)}), if the hotel agrees`))),
+        h('p',{class:'hint full'}, 'Packages charge a flat price per guest on the count you give the hotel, and include bartenders while they run.'));
+  const staff = h('div',{class:'bp-fields'},
+    h('label',{class:'field'}, 'Bartenders', h('input',{type:'number', min:0, max:20, step:1, value:num0(S.bartenders), placeholder:`Auto (${B.autoBt})`, 'data-fk':'bpf-bt', disabled:ro,
       onchange:e => saveSettings({bartenders:e.target.value === '' ? null : e.target.value})})),
-    h('label',{class:'field'}, 'Cashiers (cash bar)', h('input',{type:'number', min:0, max:10, step:1, value:S.cashiers, 'data-fk':'s-cash', disabled:ro, onchange:e => saveSettings({cashiers:e.target.value})})),
-    h('p',{class:'hint full', style:'margin:0'}, B.btFee || B.cashFee
-      ? `Staff fees: ${fmt0(B.btFee + B.cashFee)} (${B.bartenders} ${plural(B.bartenders,'bartender','bartenders')}${S.cashiers ? `, ${S.cashiers} ${plural(S.cashiers,'cashier','cashiers')}` : ''} at ${fmt0(staffFee(S.barHours))} each for ${S.barHours} hours). Hourly packages include bartenders.`
-      : 'Hourly packages include bartenders. Pay-per-drink and cash bars add $150 per bartender or cashier for 2 hours, plus $25 per extra hour. Leave bartenders blank to size it automatically: one per 100 guests at peak.'));
-  return [table, info, staff];
+    h('label',{class:'field'}, 'Cashiers', h('input',{type:'number', min:0, max:10, step:1, value:num0(S.cashierCount), placeholder:'Auto (1)', 'data-fk':'bpf-ca', disabled:ro,
+      onchange:e => saveSettings({cashierCount:e.target.value === '' ? null : e.target.value})})),
+    h('p',{class:'hint span2'}, 'Bartenders and cashiers are $150 each for 2 hours, plus $25 per extra hour. Leave blank to size automatically: one bartender per 100 guests at peak, one cashier when there is a cash bar.'));
+  const sum = [rl('Plan', planText(), 'tot')];
+  if (L.openN){
+    if (L.basis === 'package'){
+      sum.push(rl(`Open bar, ${L.tier.label.toLowerCase()} package, ${L.openN} hr: $${L.price} × ${nf.format(L.billed)} guests`, fmt0(L.cost)));
+      if (L.over4) sum.push(rl('Packages stop at 4 hours; hours past 4 are an estimate. Ask Elizabeth.', '', 'sub bad'));
+    } else {
+      sum.push(rl(`Open bar, about ${nf.format(Math.round(L.drinksEst))} drinks (${nf.format(L.guests)} guests × ${P.dph}/hr × ${L.openN} hr × $${P.avg})`, fmt0(L.uncapped)));
+      if (L.capped) sum.push(rl(`Capped at ${fmt0(P.cap)}, then cash`, fmt0(L.cost), 'good'));
+    }
+  }
+  if (L.cashN) sum.push(rl(`Cash bar, ${L.cashN} hr: guests pay ($6–8 beer, $12–14 wine and cocktails)`, '$0'));
+  if (B.btFee) sum.push(rl(`Bartenders: ${B.bartenders} × ${B.btHours} hr`, fmt0(B.btFee)));
+  if (B.cashFee) sum.push(rl(`Cashier${B.cashiers === 1 ? '' : 's'}: ${B.cashiers} × ${L.cashN} hr`, fmt0(B.cashFee)));
+  const pre = L.cost + B.btFee + B.cashFee;
+  sum.push(rl('Bar total before service and tax', fmt0(pre), 'tot'));
+  sum.push(rl('With 24% service and 12.5% tax', fmt0(pre*HOTEL_K), 'tot big'));
+  if (L.cashN) sum.push(h('p',{class:'hint', style:'margin:6px 0 0'}, 'Ask Elizabeth whether cash bar sales count toward the $5,000 minimum.'));
+  return [presets, track, h('p',{class:'hint'}, 'Each block is the hour starting at that time; the bar closes at midnight. Click a block to switch it: open bar, cash bar, closed.'),
+    L.openN ? [basis, fields] : h('p',{class:'hint'}, 'No open-bar hours yet. Click an hour to switch it on.'), staff, h('div',{class:'bp-sum'}, sum)];
 }
 function renderMenu(){
   noteFor('#menuNote');
@@ -662,13 +742,13 @@ function buildMenu(B, hc){
   const q = state.mSearch.trim().toLowerCase(), pickedOnly = state.mPicked, out = [];
   for (const sec of MENU){
     let body = [];
-    const sum = sec.special ? (B.hourly ? B.hourly.cost : 0) + B.btFee + B.cashFee
+    const sum = sec.special ? B.plan.cost + B.btFee + B.cashFee
       : B.lines.filter(l => l.item.sec === sec.key).reduce((a,l)=>a+l.cost,0) + (sec.key === 'action' || sec.key === 'sweets' || sec.key === 'carving'
         ? Object.keys(state.picks).map(id => ITEMS[id]).filter(it => it && it.sec === sec.key).reduce((a,it)=>a + (it.att ? 100*it.att : 0) + (it.carver ? 100 : 0), 0) : 0);
     if (sec.special){
-      const show = (!q || 'bar hourly package open bar beer wine preferred premium bartender cashier'.includes(q)) && (!pickedOnly || B.hourly || B.btFee || B.cashFee);
+      const show = (!q || 'bar plan open cash hourly package beer wine preferred premium bartender cashier'.includes(q)) && (!pickedOnly || B.plan.cost || B.btFee || B.cashFee);
       if (!show) continue;
-      body = hourlyBlock(B, hc);
+      body = barPlanBlock(B);
     } else {
       const items = sec.items.map(a => ITEMS[a[0]]).filter(it => (!pickedOnly || state.picks[it.id]) && (!q || (it.name + ' ' + it.desc).toLowerCase().includes(q)));
       if (!items.length) continue;
@@ -685,10 +765,14 @@ function orderText(){
   const B = budget(), S = state.settings, out = [`Hillar Moore Election Night Event (ref M-WQ83ATW), Tue Nov 3`, `Draft menu for ${nf.format(B.hc)} guests`, ''];
   for (const sec of MENU){
     if (sec.special){
-      if (B.hourly || B.btFee || B.cashFee){
+      const L = B.plan;
+      if (L.openN || L.cashN){
         out.push('Bar');
-        if (B.hourly) out.push(`- ${B.hourly.tier.label} hourly bar, ${B.hourly.hours} hours, ${nf.format(B.hc)} guests (${fmt0(B.hourly.cost)})`);
-        out.push(`- Bar open ${S.barHours} hours${B.bartenders ? `, ${B.bartenders} ${plural(B.bartenders,'bartender','bartenders')}` : ''}${S.cashiers ? `, ${S.cashiers} ${plural(S.cashiers,'cashier','cashiers')}` : ''}`);
+        out.push(`- ${planText()}`);
+        if (L.openN) out.push(L.basis === 'package'
+          ? `- Open bar as a ${L.tier.label.toLowerCase()} hourly package, ${L.openN} hours, billed on ${nf.format(L.billed)} guests (${fmt0(L.cost)})`
+          : `- Open bar hosted per drink${S.bar.cap > 0 ? `, switching to cash at ${fmt0(S.bar.cap)}` : ''} (estimate ${fmt0(L.cost)})`);
+        out.push(`- ${B.bartenders} ${plural(B.bartenders,'bartender','bartenders')}${B.cashiers ? `, ${B.cashiers} ${plural(B.cashiers,'cashier','cashiers')}` : ''}`);
         out.push('');
       }
       continue;
@@ -700,6 +784,88 @@ function orderText(){
   }
   out.push(`Estimated food and drink: ${fmt0(B.fb)} before 24% service and 12.5% tax.`);
   return out.join('\n');
+}
+
+/* ---------- print / save as PDF (menu) ---------- */
+function psRow(cells, picked){
+  return h('tr',{class:picked ? 'picked' : null},
+    h('td',null, picked ? h('span',{class:'chk'},'✓\u00a0') : null, cells[0], cells[1] ? h('span',{class:'d'}, cells[1]) : null),
+    h('td',{class:'n'}, cells[2] || ''), h('td',{class:'n'}, cells[3] || ''), h('td',{class:'n'}, cells[4] || ''));
+}
+function psTable(rows){
+  return h('table',{class:'ps-table'},
+    h('colgroup',null, h('col'), h('col',{style:'width:16%'}), h('col',{style:'width:17%'}), h('col',{style:'width:13%'})),
+    h('thead',null, h('tr',null, h('th',null,'Item'), h('th',{class:'n'},'Qty'), h('th',{class:'n'},'Price'), h('th',{class:'n'},'Est. total'))),
+    h('tbody',null, rows));
+}
+function buildPrintSheet(mode){
+  const B = budget(), S = state.settings, all = mode === 'all', out = [];
+  const logo = $('.plate img');
+  out.push(h('div',{class:'ps-head'},
+    h('div',null,
+      h('p',{class:'ps-title'}, all ? 'Renaissance evening menu' : 'Menu selections'),
+      h('p',{class:'ps-meta'}, 'Hillar Moore Election Night Event · Ref M-WQ83ATW · Tuesday, Nov 3, 2026 · Renaissance Baton Rouge, Salon 1'),
+      h('p',{class:'ps-meta'}, `Planning for ${nf.format(B.hc)} guests through the night, about ${nf.format(B.peak)} at once · Prepared ${fmtDate(todayISO(), {year:'numeric'})}`),
+      all ? h('p',{class:'ps-meta'}, 'Items we have picked are marked ✓ with quantities and estimated totals.') : null),
+    logo ? h('img',{class:'ps-logo', src:logo.src, alt:'Hillar Moore DA'}) : null));
+  for (const sec of MENU){
+    const rows = [];
+    if (sec.special){
+      const L = B.plan;
+      if (L.openN || L.cashN) rows.push(psRow([planText(), 'Bar plan, 5 PM to midnight'], true));
+      if (L.openN && L.basis === 'package') rows.push(psRow([`Open bar: ${L.tier.label.toLowerCase()} hourly package`, `${rangesOf('open')}. Billed per guest; includes soft drinks, water and bartenders.` + (L.over4 ? ' Hours past 4 are an estimate.' : ''), `${nf.format(L.billed)} guests`, `$${L.price} / guest`, fmt0(L.cost)], true));
+      if (L.openN && L.basis === 'drink') rows.push(psRow(['Open bar: hosted, pay per drink', `${rangesOf('open')}. About ${nf.format(Math.round(L.drinksEst))} drinks at about $${S.bar.avg}` + (S.bar.cap > 0 ? `; switch to cash at ${fmt0(S.bar.cap)}` : '') + '. Estimate.', `${L.openN} hr`, `~$${S.bar.avg} / drink`, fmt0(L.cost)], true));
+      if (L.cashN) rows.push(psRow(['Cash bar', `${rangesOf('cash')}. Guests pay.`, `${L.cashN} hr`, '', '$0'], true));
+      if (all){
+        HOURLY.forEach(t => rows.push(psRow([`${t.label} hourly package`, t.prices.map((p,i) => `${i+1} hr $${p}`).join(' · ') + ' per guest'], false)));
+        rows.push(psRow(['Cash bar prices', 'Tax included: preferred spirits $12 · premium $14 · house wine $12 · domestic beer $6 · imported $8 · soft drinks $5'], false));
+      }
+      if (B.btFee) rows.push(psRow(['Bartenders', `${B.btHours} hours. $150 each for 2 hours, plus $25 per extra hour.`, `${B.bartenders}`, `${fmt0(staffFee(B.btHours))} each`, fmt0(B.btFee)], true));
+      if (B.cashFee) rows.push(psRow(['Cashiers', `${L.cashN} hours of cash bar`, `${B.cashiers}`, `${fmt0(staffFee(L.cashN))} each`, fmt0(B.cashFee)], true));
+    } else {
+      for (const a of sec.items){
+        const it = ITEMS[a[0]], p = state.picks[it.id];
+        if (!p && !all) continue;
+        const desc = [it.desc, it.max ? `max ${it.max} guests` : ''].filter(Boolean).join(' · ');
+        if (p){ const q = pickQty(it, p, B.hc); rows.push(psRow([it.name, desc + (it.max && q > it.max ? ' (over the limit, ask Elizabeth)' : ''), `${nf.format(q)} ${qtyUnit(it, q)}`, priceLabel(it), fmt0(lineCost(it, q))], true)); }
+        else rows.push(psRow([it.name, desc, '', priceLabel(it), ''], false));
+      }
+    }
+    if (!rows.length) continue;
+    out.push(h('h2',{class:'ps-sec'}, sec.title));
+    if (all) out.push(h('p',{class:'ps-secnote'}, sec.note));
+    out.push(psTable(rows));
+  }
+  const feeRows = [];
+  for (const id of Object.keys(state.picks)){
+    const it = ITEMS[id]; if (!it) continue;
+    if (it.att) feeRows.push(psRow([`${it.att > 1 ? it.att + ' attendants' : 'Attendant'} · ${it.name}`, '$100 per attendant', `${it.att}`, '$100', fmt0(100*it.att)], true));
+    if (it.carver) feeRows.push(psRow([`Carver · ${it.name}`, '$100 per carving station', '1', '$100', '$100'], true));
+  }
+  if (feeRows.length){ out.push(h('h2',{class:'ps-sec'}, 'Attendants & carvers')); out.push(psTable(feeRows)); }
+  const sub = B.fb + B.shortfall + B.fees, svc = sub*SVC, tax = (sub + svc)*TAX;
+  const line = (l, v, cls) => h('div',{class:cls || null}, h('span',null,l), h('span',null,v));
+  if (B.lines.length || B.plan.cost || B.fees){
+    out.push(h('div',{class:'ps-sum'},
+      line('Food & drink', fmt2(B.fb)),
+      B.shortfall > 0 ? line('Short of the $5,000 minimum (billed as room rental)', fmt2(B.shortfall), 'warn') : line('$5,000 food & drink minimum', 'Met'),
+      B.fees ? line('Attendants, carvers & bar staff', fmt2(B.fees)) : null,
+      line('Service charge 24%', fmt2(svc)),
+      line('Sales tax 12.5%', fmt2(tax)),
+      line('Estimated menu total', fmt2(sub + svc + tax), 'tot')));
+  }
+  out.push(h('p',{class:'ps-note'}, 'Prices from the Renaissance Baton Rouge Meeting + Event Menus, 2026 edition, and subject to change. Estimate only: excludes the Kullman Boardroom ($500) and AV. Tax applies to the service charge as well. Final numbers come from the signed event order.'));
+  return out;
+}
+function printMenu(mode){
+  const B = budget();
+  if (mode === 'picks' && !(B.lines.length || B.plan.cost || B.fees)){ toast('Nothing picked yet', 'Add items first, or print the full menu.'); return; }
+  const sheet = $('#printSheet');
+  sheet.replaceChildren(...buildPrintSheet(mode).filter(Boolean));
+  document.body.classList.add('printing');
+  const done = () => { document.body.classList.remove('printing'); sheet.replaceChildren(); removeEventListener('afterprint', done); };
+  addEventListener('afterprint', done);
+  setTimeout(() => { try { window.print(); } catch(e){ done(); toast("Couldn't open printing", 'Use your browser menu: File, then Print.'); } }, 60);
 }
 
 /* ---------- budget ---------- */
@@ -726,12 +892,13 @@ function renderBudget(){
   $('#receipt').replaceChildren(...[
     h('div',{class:'rc-head'}, h('b',null,'BANQUET CHECK · ESTIMATE'), h('span',null,'Renaissance Baton Rouge · M-WQ83ATW'), h('span',null,`Tue, Nov 3 · ${nf.format(B.hc)} guests, about ${nf.format(B.peak)} at once`)),
     rl(`Food (${foodN} ${plural(foodN,'item','items')})`, fmt2(B.food)),
-    rl(B.hourly ? `Bar (${B.hourly.tier.label.toLowerCase()}, ${B.hourly.hours} hr) & drinks` : 'Bar & drinks', fmt2(B.bar)),
+    rl(B.plan.openN ? (B.plan.basis === 'package' ? `Open bar (${B.plan.tier.label.toLowerCase()} package) & drinks` : 'Open bar (per drink, est.) & drinks') : 'Bar & drinks', fmt2(B.bar)),
+    rl(planText(), '', 'sub'),
     rl('Food & drink subtotal', fmt2(B.fb), 'tot'),
     B.shortfall > 0 ? rl('Short of $5,000 minimum, billed as rental', fmt2(B.shortfall), 'bad') : rl('$5,000 minimum', 'Met', 'good'),
     B.att + B.carve > 0 ? rl('Attendants & carvers', fmt2(B.att + B.carve)) : null,
-    B.btFee > 0 ? rl(`Bartenders (${B.bartenders} × ${S.barHours} hr)`, fmt2(B.btFee)) : null,
-    B.cashFee > 0 ? rl(`Cashiers (${S.cashiers} × ${S.barHours} hr)`, fmt2(B.cashFee)) : null,
+    B.btFee > 0 ? rl(`Bartenders (${B.bartenders} × ${B.btHours} hr)`, fmt2(B.btFee)) : null,
+    B.cashFee > 0 ? rl(`Cashier${B.cashiers === 1 ? '' : 's'} (${B.cashiers} × ${B.plan.cashN} hr)`, fmt2(B.cashFee)) : null,
     rl('Kullman Boardroom', fmt2(BOARDROOM)),
     rl('Salon 1 + holding suite', 'Waived', 'good'),
     rl(`Hotel AV & extras${unpricedHotel ? ` (${unpricedHotel} unpriced)` : ''}`, fmt2(B.hotelExpSum), unpricedHotel ? 'bad' : ''),
@@ -878,15 +1045,6 @@ async function setPickQty(id, val){
   await guarded('p:'+id, () => db.doc('picks/' + id).update({qty:q, follow:false}));
 }
 async function followPick(id){ await guarded('p:'+id, () => db.doc('picks/' + id).update({follow:true})); }
-async function pickHourly(id){
-  if (!canWrite() || pending.has('hourly')) return;
-  const existing = Object.keys(state.picks).filter(k => k.startsWith('hourly-'));
-  pending.add('hourly');
-  try {
-    for (const k of existing) await db.doc('picks/' + k).delete();
-    if (!existing.includes(id)) await db.doc('picks/' + id).set({qty:0, follow:true, by:meId(), at:nowISO()});
-  } catch(e){ writeFail(e); } finally { pending.delete('hourly'); }
-}
 function saveSettings(patch){
   if (!canWrite()) return;
   state.settings = cleanSettings(Object.assign({}, state.settings, patch));
@@ -943,7 +1101,7 @@ function bindStatic(){
     });
   });
   $$('[data-goto]').forEach(b => b.addEventListener('click', () => { setTab(b.dataset.goto); $('.tabs').scrollIntoView({behavior:reduceMotion() ? 'auto' : 'smooth'}); }));
-  $$('.seg button').forEach(b => b.addEventListener('click', () => { state.view = b.dataset.view; savePrefs(); dirty.add('board'); schedule(); }));
+  $$('.board-head .seg button').forEach(b => b.addEventListener('click', () => { state.view = b.dataset.view; savePrefs(); dirty.add('board'); schedule(); }));
   $('#hideDone').addEventListener('change', e => { state.hideDone = e.target.checked; savePrefs(); dirty.add('board'); schedule(); });
   $('#addTaskBtn').addEventListener('click', () => { const f = $('#taskForm'); f.hidden = !f.hidden; $('#addTaskBtn').setAttribute('aria-expanded', String(!f.hidden)); if (!f.hidden) $('#tfTitle').focus(); });
   $('#tfCancel').addEventListener('click', () => { $('#taskForm').hidden = true; $('#addTaskBtn').setAttribute('aria-expanded','false'); });
@@ -958,6 +1116,10 @@ function bindStatic(){
   $('#mSearch').addEventListener('input', e => { state.mSearch = e.target.value; dirty.add('menu'); schedule(); });
   $('#mPicked').addEventListener('change', e => { state.mPicked = e.target.checked; dirty.add('menu'); schedule(); });
   $('#copyOrder').addEventListener('click', () => copyText(orderText(), 'Menu order'));
+  if ($('#printPicks')){
+    $('#printPicks').addEventListener('click', () => printMenu('picks'));
+    $('#printAll').addEventListener('click', () => printMenu('all'));
+  }
   ['#hcMenu','#hcBudget'].forEach(s => $(s).addEventListener('change', e => { const v = Math.round(num(e.target.value,0)); if (v >= 1) saveSettings({headcount:v}); }));
   $('#capInput').addEventListener('change', e => saveSettings({cap:num(e.target.value,0)}));
   ['#peakMenu','#peakBudget'].forEach(s => $(s).addEventListener('change', e => saveSettings({peak:e.target.value === '' ? null : Math.round(num(e.target.value,0)) || null})));
@@ -1021,6 +1183,7 @@ async function connect(){
 function renderModeUI(){
   const local = state.mode === 'local';
   const tools = $('#dataTools'); if (tools) tools.hidden = !local;
+  const pt = $('#printTools'); if (pt) pt.hidden = !local;   // the Claude viewer can't open a print window
   const hint = $('#shareHint'); if (hint && local) hint.textContent = 'Saved in this browser. Export a backup at the bottom of the page to move it or share it.';
 }
 function exportData(){
