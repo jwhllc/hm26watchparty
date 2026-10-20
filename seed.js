@@ -706,12 +706,29 @@ const SEED = {
     }
   ],
   "settings": {
-    "barHours": 7,
-    "bartenders": null,
-    "cap": 15000,
-    "cashiers": 0,
     "headcount": 300,
     "peak": 150,
-    "target": 10000
+    "cap": 15000,
+    "target": 10000,
+    "bartenders": null,
+    "cashierCount": null,
+    "bar": {
+      "slots": [
+        "cash",
+        "cash",
+        "cash",
+        "cash",
+        "cash",
+        "cash",
+        "cash"
+      ],
+      "basis": "drink",
+      "tier": "bw",
+      "billOn": "total",
+      "guests": null,
+      "dph": 1,
+      "avg": 8,
+      "cap": 0
+    }
   }
 };
