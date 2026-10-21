@@ -1014,33 +1014,85 @@ function renderBudget(){
   setIfIdle($('#hcBudget'), B.hc); setIfIdle($('#peakBudget'), B.peak); setIfIdle($('#capInput'), B.cap > 0 ? B.cap : ''); setIfIdle($('#targetInput'), B.target > 0 ? B.target : '');
   const gc = st.confirmed + st.maybe;
   $('#useGuests').textContent = `Use the guest list (${nf.format(gc)} coming or maybe)`;
-  const foodN = B.lines.filter(l => l.item.kind === 'food').length;
-  const unpricedHotel = B.hotelExp.filter(e => !(e.amount > 0)).length;
   $('#receipt').replaceChildren(...[
     h('div',{class:'rc-head'}, h('b',null,'BANQUET CHECK · ESTIMATE'), h('span',null,'Renaissance Baton Rouge · M-WQ83ATW'), h('span',null,`Tue, Nov 3 · ${nf.format(B.hc)} guests, about ${nf.format(B.peak)} at once`)),
-    rl(`Food (${foodN} ${plural(foodN,'item','items')})`, fmt2(B.food)),
-    rl(B.plan.openN ? (B.plan.basis === 'package' ? `Open bar (${B.plan.tier.label.toLowerCase()} package) & drinks` : 'Open bar (per drink, est.) & drinks') : 'Bar & drinks', fmt2(B.bar)),
-    rl(planText(), '', 'sub'),
-    rl('Food & drink subtotal', fmt2(B.fb), 'tot'),
-    B.shortfall > 0 ? rl('Short of $5,000 minimum, billed as rental', fmt2(B.shortfall), 'bad') : rl('$5,000 minimum', 'Met', 'good'),
-    B.att + B.carve > 0 ? rl('Attendants & carvers', fmt2(B.att + B.carve)) : null,
-    B.btFee > 0 ? rl(`Bartenders (${B.bartenders} × ${B.btHours} hr)`, fmt2(B.btFee)) : null,
-    B.cashFee > 0 ? rl(`Cashier${B.cashiers === 1 ? '' : 's'} (${B.cashiers} × ${B.plan.cashN} hr)`, fmt2(B.cashFee)) : null,
-    rl('Kullman Boardroom', fmt2(BOARDROOM)),
-    rl('Salon 1 + holding suite', 'Waived', 'good'),
-    rl(`AV, Encore (${B.avLines.length} ${plural(B.avLines.length,'item','items')})`, fmt2(B.av)),
-    B.hotelExp.length ? rl(`Other hotel charges${unpricedHotel ? ` (${unpricedHotel} unpriced)` : ''}`, fmt2(B.hotelExpSum), unpricedHotel ? 'bad' : '') : null,
-    rl('Subtotal', fmt2(B.sub), 'tot'),
-    rl('Service charge 24%', fmt2(B.svc)),
-    rl('Sales tax 12.5%', fmt2(B.tax)),
-    rl('Hotel total', fmt2(B.hotelTotal), 'tot big'),
-    rl('Deposit paid Oct 6', '−' + fmt2(DEPOSIT), 'good'),
-    rl('Balance to the hotel', fmt2(B.balance), 'tot'),
-    rl(`Outside the hotel (${B.outside.length} ${plural(B.outside.length,'line','lines')})`, fmt2(B.outsideSum)),
-    rl('All-in', fmt2(B.all), 'tot big'),
+    ...checkLines(B).map(([l, v, cls]) => rl(l, v, cls)),
     h('p',{class:'rc-note'}, 'Tax applies on top of the service charge, which matches how the hotel figured the $767.30 deposit. With nothing picked, this shows the contract minimum: $7,672.50. Final numbers come from the signed event order.')].filter(Boolean));
   const box = $('#exList');
   withFocus(box, () => box.replaceChildren(...buildExpenses(B)));
+}
+function checkLines(B){
+  const foodN = B.lines.filter(l => l.item.kind === 'food').length, unpricedHotel = B.hotelExp.filter(e => !(e.amount > 0)).length;
+  return [
+    [`Food (${foodN} ${plural(foodN,'item','items')})`, fmt2(B.food)],
+    [B.plan.openN ? (B.plan.basis === 'package' ? `Open bar (${B.plan.tier.label.toLowerCase()} package) & drinks` : 'Open bar (per drink, est.) & drinks') : 'Bar & drinks', fmt2(B.bar)],
+    [planText(), '', 'sub'],
+    ['Food & drink subtotal', fmt2(B.fb), 'tot'],
+    B.shortfall > 0 ? ['Short of $5,000 minimum, billed as rental', fmt2(B.shortfall), 'bad'] : ['$5,000 minimum', 'Met', 'good'],
+    B.att + B.carve > 0 ? ['Attendants & carvers', fmt2(B.att + B.carve)] : null,
+    B.btFee > 0 ? [`Bartenders (${B.bartenders} × ${B.btHours} hr)`, fmt2(B.btFee)] : null,
+    B.cashFee > 0 ? [`Cashier${B.cashiers === 1 ? '' : 's'} (${B.cashiers} × ${B.plan.cashN} hr)`, fmt2(B.cashFee)] : null,
+    ['Kullman Boardroom', fmt2(BOARDROOM)],
+    ['Salon 1 + holding suite', 'Waived', 'good'],
+    [`AV, Encore (${B.avLines.length} ${plural(B.avLines.length,'item','items')})`, fmt2(B.av)],
+    B.hotelExp.length ? [`Other hotel charges${unpricedHotel ? ` (${unpricedHotel} unpriced)` : ''}`, fmt2(B.hotelExpSum), unpricedHotel ? 'bad' : ''] : null,
+    ['Subtotal', fmt2(B.sub), 'tot'],
+    ['Service charge 24%', fmt2(B.svc)],
+    ['Sales tax 12.5%', fmt2(B.tax)],
+    ['Hotel total', fmt2(B.hotelTotal), 'tot big'],
+    ['Deposit paid Oct 6', '−' + fmt2(DEPOSIT), 'good'],
+    ['Balance to the hotel', fmt2(B.balance), 'tot'],
+    [`Outside the hotel (${B.outside.length} ${plural(B.outside.length,'line','lines')})`, fmt2(B.outsideSum)],
+    ['All-in', fmt2(B.all), 'tot big'],
+  ].filter(Boolean);
+}
+
+/* Internal budget printout: summary, banquet check, every line behind it, and outside costs. */
+function buildBudgetSheet(){
+  const B = budget(), S = state.settings, out = [], logo = $('.plate img');
+  out.push(h('div',{class:'ps-head'},
+    h('div',null, h('p',{class:'ps-title'}, 'Watch party budget'),
+      h('p',{class:'ps-meta'}, 'Hillar Moore Election Night Event · Ref M-WQ83ATW · Tuesday, Nov 3, 2026 · Renaissance Baton Rouge, Salon 1'),
+      h('p',{class:'ps-meta'}, `Planning for ${nf.format(B.hc)} guests through the night, about ${nf.format(B.peak)} at once · Prepared ${fmtDate(todayISO(), {year:'numeric'})}`),
+      h('p',{class:'ps-tag'}, 'Internal planning estimate · not for the hotel')),
+    logo ? h('img',{class:'ps-logo', src:logo.src, alt:'Hillar Moore DA'}) : null));
+  const kpi = (label, value, sub) => h('div',{class:'ps-kpi'}, h('span',{class:'k-l'}, label), h('span',{class:'k-v'}, value), sub ? h('span',{class:'k-s'}, sub) : null);
+  const status = (B.cap > 0 || B.target > 0) ? budgetStatus(B, false) : 'No target or ceiling set';
+  out.push(h('div',{class:'ps-kpis'},
+    kpi('All-in estimate', fmt0(B.all), status),
+    kpi('Hotel total', fmt0(B.hotelTotal), `${fmt0(B.balance)} after the deposit`),
+    kpi('Outside the hotel', fmt0(B.outsideSum), `${B.outside.length} ${plural(B.outside.length,'line','lines')}`),
+    kpi('Per guest', fmt0(B.perGuest), `across ${nf.format(B.hc)} guests`)));
+  if (B.target > 0 || B.cap > 0) out.push(h('p',{class:'ps-meta ps-budgetline'},
+    [B.target > 0 ? `Target ${fmt0(B.target)}` : '', B.cap > 0 ? `Ceiling ${fmt0(B.cap)}` : ''].filter(Boolean).join(' · ') + '. ' + (roomText(B).split('. Every')[0] || '') + (roomText(B) ? '.' : '')));
+  const line = ([l, v, cls]) => h('div',{class:cls || null}, h('span',null,l), h('span',null,v));
+  out.push(h('h2',{class:'ps-sec'}, 'Hotel banquet check (estimate)'));
+  out.push(h('div',{class:'ps-sum full'}, checkLines(B).map(line)));
+  const fbRows = [];
+  for (const sec of MENU){
+    if (sec.special){
+      const L = B.plan;
+      if (L.openN || L.cashN) fbRows.push(psRow([`Bar plan: ${planText()}`, L.openN ? (L.basis === 'package' ? `${L.tier.label} package, $${L.price} × ${nf.format(L.billed)} guests` : `Open bar per drink, about ${nf.format(Math.round(L.drinksEst))} drinks` + (S.bar.cap > 0 ? `, capped at ${fmt0(S.bar.cap)}` : '')) : 'Guests pay at the cash bar', '', '', fmt0(L.cost)], true));
+      continue;
+    }
+    B.lines.filter(l => l.item.sec === sec.key).forEach(l => fbRows.push(psRow([l.item.name, sec.title, `${nf.format(l.qty)} ${qtyUnit(l.item, l.qty)}`, priceLabel(l.item), fmt0(l.cost)], true)));
+  }
+  if (B.att + B.carve) fbRows.push(psRow(['Attendants & carvers', '$100 each', '', '', fmt0(B.att + B.carve)], true));
+  if (B.btFee) fbRows.push(psRow(['Bartenders', `${B.bartenders} × ${B.btHours} hours`, '', `${fmt0(staffFee(B.btHours))} each`, fmt0(B.btFee)], true));
+  if (B.cashFee) fbRows.push(psRow(['Cashiers', `${B.cashiers} × ${B.plan.cashN} hours`, '', `${fmt0(staffFee(B.plan.cashN))} each`, fmt0(B.cashFee)], true));
+  out.push(h('h2',{class:'ps-sec'}, 'Food, drink & bar staff'));
+  out.push(fbRows.length ? psTable(fbRows) : h('p',{class:'ps-meta'}, 'Nothing picked yet. The $5,000 minimum applies either way.'));
+  out.push(h('h2',{class:'ps-sec'}, 'AV (Encore)'));
+  out.push(B.avLines.length ? psTable(B.avLines.map(l => psRow([l.item.name, AV_MENU.find(s => s.key === l.item.sec).title, `${nf.format(l.qty)} ${qtyUnit(l.item, l.qty)}`, priceLabel(l.item), fmt0(l.cost)], true)))
+    : h('p',{class:'ps-meta'}, 'No AV picked yet.'));
+  const allExp = B.hotelExp.concat(B.outside);
+  out.push(h('h2',{class:'ps-sec'}, 'Other costs'));
+  out.push(allExp.length ? psTable(allExp.map(e => {
+    const st = EXP_STATUS.find(s => s.key === e.status);
+    return psRow([e.label, [catOf(e.cat).label + (catOf(e.cat).hotel ? ' (billed by the hotel)' : ''), st ? st.label : '', e.vendor, e.notes].filter(Boolean).join(' · '), '', '', e.amount > 0 ? fmt0(e.amount) : 'Needs a number'], e.amount > 0);
+  })) : h('p',{class:'ps-meta'}, 'No other costs yet.'));
+  out.push(h('p',{class:'ps-note'}, 'Hotel charges get a 24% service charge, then 12.5% sales tax on both, which matches how the hotel figured the $767.30 deposit. The $5,000 food and drink minimum excludes AV and staff fees; any shortfall is billed as room rental. Encore and menu prices are 2026 rates and subject to change. Final hotel numbers come from the signed event order.'));
+  return out;
 }
 function buildExpenses(B){
   if (state.dbStatus === 'off') return [emptyCard('Budget lines live in Claude', 'Open this page in Claude while signed in to add costs.')];
@@ -1242,6 +1294,7 @@ function bindStatic(){
   $('#copyOrder').addEventListener('click', () => copyText(orderText(), 'Menu order'));
   $$('.fp-pick').forEach(b => b.addEventListener('click', () => pickLayout(b.dataset.layout)));
   $('#copyAv').addEventListener('click', () => copyText(avOrderText(), 'AV order'));
+  if ($('#printBudget')) $('#printBudget').addEventListener('click', () => runPrint(buildBudgetSheet()));
   $('#menuOpenAll').addEventListener('click', () => setAllSections(MENU.map(s => s.key), true));
   $('#menuCloseAll').addEventListener('click', () => setAllSections(MENU.map(s => s.key), false));
   $('#avOpenAll').addEventListener('click', () => setAllSections(AV_MENU.map(s => s.key), true));
@@ -1318,7 +1371,8 @@ function renderModeUI(){
   const local = state.mode === 'local';
   const tools = $('#dataTools'); if (tools) tools.hidden = !local;
   const pt = $('#printTools'); if (pt) pt.hidden = !local;
-  const pa = $('#printAv'); if (pa) pa.hidden = !local;   // the Claude viewer can't open a print window
+  const pa = $('#printAv'); if (pa) pa.hidden = !local;
+  const pb = $('#printBudgetTools'); if (pb) pb.hidden = !local;   // the Claude viewer can't open a print window
   const hint = $('#shareHint'); if (hint && local) hint.textContent = 'Saved in this browser. Export a backup at the bottom of the page to move it or share it.';
 }
 function exportData(){
