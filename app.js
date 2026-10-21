@@ -3,8 +3,8 @@
 'use strict';
 
 /* ---------- constants ---------- */
-const TABS = ['board','guests','menu','budget','venue','flyer'];
-const PANELS = ['board','guests','menu','budget'];
+const TABS = ['board','guests','menu','budget','room','venue','flyer'];
+const PANELS = ['board','guests','menu','budget','room'];
 const DOORS = Date.UTC(2026,10,3,23,0,0);     // 5:00 PM CST, Nov 3
 const WRAP_UP = Date.UTC(2026,10,4,6,0,0);    // midnight CST
 const SVC = 0.24, TAX = 0.125, MIN_FB = 5000, DEPOSIT = 767.30, BOARDROOM = 500;
@@ -18,7 +18,7 @@ const BAR_PRESETS = [
   {label:'Open all night',        slots:['open','open','open','open','open','open','open']},
   {label:'No bar',                slots:['off','off','off','off','off','off','off']},
 ];
-const DEFAULT_SETTINGS = {headcount:300, peak:null, cap:0, target:0, bartenders:null, cashierCount:null, bar:DEFAULT_BAR};
+const DEFAULT_SETTINGS = {headcount:300, peak:null, cap:0, target:0, bartenders:null, cashierCount:null, bar:DEFAULT_BAR, layout:null};
 const OFF_MSG = 'The shared board, guest list, menu picks and budget load when this page is opened in Claude while signed in. The Venue and Flyer tabs work anywhere.';
 const LOCAL_WARN = "This browser isn't saving changes (a private window or blocked storage). Export a backup before you close the tab.";
 const RO_MSG = "You're viewing. Checking things off and editing need Contributor or Editor access from Josh.";
@@ -211,6 +211,7 @@ function cleanSettings(x){
     peak:x.peak == null || x.peak === '' ? null : clamp(Math.round(num(x.peak,0)),1,5000),
     bartenders:x.bartenders == null || x.bartenders === '' ? null : clamp(Math.round(num(x.bartenders,0)),0,20),
     cashierCount:x.cashierCount == null || x.cashierCount === '' ? null : clamp(Math.round(num(x.cashierCount,0)),0,10),
+    layout:x.layout === 'A' || x.layout === 'B' ? x.layout : null,
     bar:cleanBar(x.bar)};
 }
 function cleanBar(b){
@@ -226,6 +227,7 @@ function cleanBar(b){
 function pickQty(item, pick, hc){ return (item.unit === 'pp' && pick.follow) ? hc : pick.qty; }
 function lineCost(item, qty){ return item.unit === 'pc50' ? item.price*qty/50 : item.price*qty; }
 function defaultQty(item, hc){
+  if (item.def) return item.def;
   switch (item.unit){
     case 'pp': return hc;
     case 'pc50': return Math.max(50, Math.ceil(hc/50)*50);
@@ -239,11 +241,12 @@ function defaultQty(item, hc){
 const staffFee = hours => 150 + 25*Math.max(0, hours-2);
 function budget(){
   const S = state.settings, hc = S.headcount, peak = S.peak || hc;
-  const lines = []; let food = 0, bar = 0, att = 0, carve = 0, pieces = 0, drinks = 0;
+  const lines = [], avLines = []; let food = 0, bar = 0, av = 0, att = 0, carve = 0, pieces = 0, drinks = 0;
   for (const [id, p] of Object.entries(state.picks)){
     if (id.startsWith('hourly-')) continue;   // older saves; open-bar packages now live in the bar plan
     const it = ITEMS[id]; if (!it) continue;
     const q = pickQty(it, p, hc), c = lineCost(it, q);
+    if (it.kind === 'av'){ av += c; avLines.push({item:it, qty:q, cost:c}); continue; }   // AV: service and tax apply, but not part of the F&B minimum
     lines.push({item:it, qty:q, cost:c});
     if (it.kind === 'bar') bar += c; else food += c;
     if (it.att) att += 100*it.att;
@@ -279,10 +282,10 @@ function budget(){
   const hotelExp = state.expenses.filter(e => catOf(e.cat).hotel), hotelExpSum = hotelExp.reduce((a,e)=>a+e.amount,0);
   const outside = state.expenses.filter(e => !catOf(e.cat).hotel), outsideSum = outside.reduce((a,e)=>a+e.amount,0);
   const fees = att + carve + btFee + cashFee;
-  const sub = fb + shortfall + fees + BOARDROOM + hotelExpSum;
+  const sub = fb + shortfall + fees + BOARDROOM + av + hotelExpSum;
   const svc = sub*SVC, tax = (sub+svc)*TAX, hotelTotal = sub + svc + tax;
   const all = hotelTotal + outsideSum;
-  return {hc, peak, lines, food, bar, fb, shortfall, att, carve, bartenders, autoBt, btHours, cashiers, plan, btFee, cashFee, fees, hotelExp, hotelExpSum,
+  return {hc, peak, lines, avLines, av, food, bar, fb, shortfall, att, carve, bartenders, autoBt, btHours, cashiers, plan, btFee, cashFee, fees, hotelExp, hotelExpSum,
     outside, outsideSum, sub, svc, tax, hotelTotal, balance:hotelTotal - DEPOSIT, all, perGuest: hc ? all/hc : 0,
     pieces, drinks, cap:S.cap, target:S.target, unpriced:state.expenses.filter(e => !(e.amount > 0)).length};
 }
@@ -613,6 +616,8 @@ function priceLabel(it){
     case 'gallon': return p + ' / gallon';
     case 'drink': return p + ' / drink';
     case 'bottle': return p + ' / bottle';
+    case 'foot': return p + ' / ft';
+    case 'hour': return p + ' / hr';
     default: return it.per ? `${p} ${it.per}` : it.serves ? `${p} · serves ${it.serves}` : p + ' each';
   }
 }
@@ -624,7 +629,9 @@ function qtyUnit(it, q){
     case 'gallon': return plural(q,'gallon','gallons');
     case 'drink': return plural(q,'drink','drinks');
     case 'bottle': return plural(q,'bottle','bottles');
-    default: return it.carver ? plural(q,'roast','roasts') : it.serves ? plural(q,'order','orders') : 'each';
+    case 'foot': return plural(q,'foot','feet');
+    case 'hour': return plural(q,'hour','hours');
+    default: return it.carver ? plural(q,'roast','roasts') : it.serves ? plural(q,'order','orders') : plural(q,'unit','units');
   }
 }
 function menuItem(it, hc){
@@ -860,12 +867,101 @@ function buildPrintSheet(mode){
 function printMenu(mode){
   const B = budget();
   if (mode === 'picks' && !(B.lines.length || B.plan.cost || B.fees)){ toast('Nothing picked yet', 'Add items first, or print the full menu.'); return; }
+  runPrint(buildPrintSheet(mode));
+}
+function runPrint(nodes){
   const sheet = $('#printSheet');
-  sheet.replaceChildren(...buildPrintSheet(mode).filter(Boolean));
+  sheet.replaceChildren(...nodes.filter(Boolean));
   document.body.classList.add('printing');
   const done = () => { document.body.classList.remove('printing'); sheet.replaceChildren(); removeEventListener('afterprint', done); };
   addEventListener('afterprint', done);
   setTimeout(() => { try { window.print(); } catch(e){ done(); toast("Couldn't open printing", 'Use your browser menu: File, then Print.'); } }, 60);
+}
+
+/* ---------- room & AV ---------- */
+const LAYOUT_NAMES = {A:'Layout A, stage on the end wall', B:'Layout B, stage on the long wall'};
+const isAvId = id => !!(ITEMS[id] && ITEMS[id].kind === 'av');
+function kitCost(k){ return k.items.reduce((s,[id,q]) => s + lineCost(ITEMS[id], q), 0); }
+function kitMatches(k){
+  const ids = Object.keys(state.picks).filter(isAvId);
+  return ids.length === k.items.length && k.items.every(([id,q]) => state.picks[id] && pickQty(ITEMS[id], state.picks[id], state.settings.headcount) === q);
+}
+async function applyKit(k){
+  if (!canWrite() || pending.has('avkit')) return;
+  const clearing = kitMatches(k), want = new Map(clearing ? [] : k.items);
+  pending.add('avkit');
+  try {
+    for (const id of Object.keys(state.picks).filter(isAvId)) if (!want.has(id)) await db.doc('picks/' + id).delete();
+    for (const [id, q] of want) await db.doc('picks/' + id).set({qty:q, follow:false, by:meId(), at:nowISO()});
+    toast(clearing ? 'AV cleared' : `${k.label} kit loaded`, clearing ? 'No AV picked.' : `${fmt0(kitCost(k)*HOTEL_K)} with service and tax. Adjust any line below.`);
+  } catch(e){ writeFail(e); } finally { pending.delete('avkit'); }
+}
+async function pickLayout(L){
+  if (!canWrite()) return;
+  saveSettings({layout:state.settings.layout === L ? null : L});
+}
+function renderRoom(){
+  noteFor('#roomNote');
+  const S = state.settings, ro = !canWrite(), B = budget(), on = state.dbStatus === 'on' && state.loaded.picks;
+  $$('.fp-pick').forEach(b => {
+    const picked = S.layout === b.dataset.layout;
+    b.setAttribute('aria-pressed', picked ? 'true' : 'false'); b.textContent = picked ? 'Picked ✓' : 'Pick this layout'; b.disabled = ro;
+    b.closest('.fp-card').classList.toggle('picked', picked);
+  });
+  $('#avKits').replaceChildren(...AV_KITS.map(k => h('button',{type:'button', class:'chip', 'aria-pressed':on && kitMatches(k) ? 'true' : 'false', 'data-fk':'avk-'+k.key, disabled:ro,
+    onclick:() => applyKit(k)}, `${k.label} · ${fmt0(kitCost(k)*HOTEL_K)}`)));
+  const n = B.avLines.length;
+  $('#avSum').replaceChildren(
+    rl(`AV picked (${n} ${plural(n,'item','items')})`, on ? fmt2(B.av) : '--', 'tot'),
+    rl('Service charge 24%', on ? fmt2(B.av*SVC) : '--'),
+    rl('Sales tax 12.5%', on ? fmt2(B.av*(1+SVC)*TAX) : '--'),
+    rl('AV with service and tax', on ? fmt2(B.av*HOTEL_K) : '--', 'tot big'),
+    h('p',{class:'rc-note'}, "AV doesn't count toward the $5,000 food and drink minimum. Encore's prices took effect Jan 1, 2026, and some packages may add labor."));
+  const box = $('#avList');
+  if (state.dbStatus === 'off'){ box.replaceChildren(emptyCard('AV picks live in Claude', 'Open this page in Claude while signed in to pick AV. Prices below are for reference.')); return; }
+  withFocus(box, () => box.replaceChildren(...AV_MENU.map(sec => {
+    const sum = B.avLines.filter(l => l.item.sec === sec.key).reduce((s,l) => s + l.cost, 0);
+    return h('section',{class:'msec', id:'a-' + sec.key},
+      h('div',{class:'msec-h'}, h('h3',{class:'sec-h'}, sec.title), sum ? h('span',{class:'msec-sum'}, fmt0(sum) + ' picked') : null),
+      h('p',{class:'msec-note'}, sec.note), sec.items.map(a => menuItem(ITEMS[a[0]], B.hc)));
+  })));
+}
+function avOrderText(){
+  const B = budget(), S = state.settings, out = ['Hillar Moore Election Night Event (ref M-WQ83ATW), Tue Nov 3, Salon 1, Renaissance Baton Rouge', 'Draft AV order from the Encore 2026 price sheet', ''];
+  if (!B.avLines.length) out.push('(No AV picked yet.)');
+  for (const sec of AV_MENU){
+    const ls = B.avLines.filter(l => l.item.sec === sec.key); if (!ls.length) continue;
+    out.push(sec.title); ls.forEach(l => out.push(`- ${l.item.name}: ${nf.format(l.qty)} ${qtyUnit(l.item, l.qty)} (${fmt0(l.cost)})`)); out.push('');
+  }
+  if (S.layout) out.push(`Floor plan: ${LAYOUT_NAMES[S.layout]}.`);
+  out.push(`Estimated AV: ${fmt0(B.av)} before service and tax.`, '', 'Questions: What does each package include? Is setup or technician labor extra? Can uplights do purple and red?');
+  return out.join('\n');
+}
+function buildAvSheet(){
+  const B = budget(), S = state.settings, out = [], logo = $('.plate img');
+  out.push(h('div',{class:'ps-head'},
+    h('div',null, h('p',{class:'ps-title'}, 'AV order'),
+      h('p',{class:'ps-meta'}, 'Hillar Moore Election Night Event · Ref M-WQ83ATW · Tuesday, Nov 3, 2026 · Renaissance Baton Rouge, Salon 1'),
+      h('p',{class:'ps-meta'}, `From the Encore 2026 price sheet · ${S.layout ? LAYOUT_NAMES[S.layout] + ' · ' : ''}Prepared ${fmtDate(todayISO(), {year:'numeric'})}`)),
+    logo ? h('img',{class:'ps-logo', src:logo.src, alt:'Hillar Moore DA'}) : null));
+  for (const sec of AV_MENU){
+    const ls = B.avLines.filter(l => l.item.sec === sec.key); if (!ls.length) continue;
+    out.push(h('h2',{class:'ps-sec'}, sec.title));
+    out.push(psTable(ls.map(l => psRow([l.item.name, l.item.desc, `${nf.format(l.qty)} ${qtyUnit(l.item, l.qty)}`, priceLabel(l.item), fmt0(l.cost)], true))));
+  }
+  const line = (l, v, cls) => h('div',{class:cls || null}, h('span',null,l), h('span',null,v));
+  out.push(h('div',{class:'ps-sum'}, line('AV', fmt2(B.av)), line('Service charge 24%', fmt2(B.av*SVC)), line('Sales tax 12.5%', fmt2(B.av*(1+SVC)*TAX)), line('Estimated AV total', fmt2(B.av*HOTEL_K), 'tot')));
+  out.push(h('p',{class:'ps-note'}, 'Estimate only. Encore prices are subject to change; labor may apply to some packages. Contact: Jacob A. Quebedeaux, Director of Event Technology, Jacob.Quebedeaux@EncoreGlobal.com, (225) 388-5694.'));
+  return out;
+}
+let avMigrated = false;
+function migrateAvPlaceholders(){
+  // The AV tab replaces the two $0 placeholder cost lines from the first version.
+  if (avMigrated || !canWrite()) return; avMigrated = true;
+  ['av-projectors','av-band'].forEach(id => {
+    const e = state.expenses.find(x => x.id === id);
+    if (e && e.amount === 0 && e.status === 'estimate' && e.cat === 'av') db.doc('expenses/' + id).delete().catch(() => {});
+  });
 }
 
 /* ---------- budget ---------- */
@@ -901,7 +997,8 @@ function renderBudget(){
     B.cashFee > 0 ? rl(`Cashier${B.cashiers === 1 ? '' : 's'} (${B.cashiers} × ${B.plan.cashN} hr)`, fmt2(B.cashFee)) : null,
     rl('Kullman Boardroom', fmt2(BOARDROOM)),
     rl('Salon 1 + holding suite', 'Waived', 'good'),
-    rl(`Hotel AV & extras${unpricedHotel ? ` (${unpricedHotel} unpriced)` : ''}`, fmt2(B.hotelExpSum), unpricedHotel ? 'bad' : ''),
+    rl(`AV, Encore (${B.avLines.length} ${plural(B.avLines.length,'item','items')})`, fmt2(B.av)),
+    B.hotelExp.length ? rl(`Other hotel charges${unpricedHotel ? ` (${unpricedHotel} unpriced)` : ''}`, fmt2(B.hotelExpSum), unpricedHotel ? 'bad' : '') : null,
     rl('Subtotal', fmt2(B.sub), 'tot'),
     rl('Service charge 24%', fmt2(B.svc)),
     rl('Sales tax 12.5%', fmt2(B.tax)),
@@ -1033,7 +1130,7 @@ async function togglePick(id){
   const it = ITEMS[id]; if (!it) return;
   if (state.picks[id]) await guarded('p:'+id, () => db.doc('picks/' + id).delete());
   else {
-    const ok = await guarded('p:'+id, () => db.doc('picks/' + id).set({qty:defaultQty(it, state.settings.headcount), follow:it.unit === 'pp', by:meId(), at:nowISO()}));
+    const ok = await guarded('p:'+id, () => db.doc('picks/' + id).set({qty:defaultQty(it, state.settings.headcount), follow:it.unit === 'pp' && !it.def, by:meId(), at:nowISO()}));
     if (ok) toast('Added to the menu', it.name);
   }
 }
@@ -1048,7 +1145,7 @@ async function followPick(id){ await guarded('p:'+id, () => db.doc('picks/' + id
 function saveSettings(patch){
   if (!canWrite()) return;
   state.settings = cleanSettings(Object.assign({}, state.settings, patch));
-  settingsDirty = true; changed('menu','budget');
+  settingsDirty = true; changed('menu','budget','room');
   clearTimeout(settingsTimer);
   settingsTimer = setTimeout(() => {
     const body = Object.assign({}, state.settings);
@@ -1116,6 +1213,12 @@ function bindStatic(){
   $('#mSearch').addEventListener('input', e => { state.mSearch = e.target.value; dirty.add('menu'); schedule(); });
   $('#mPicked').addEventListener('change', e => { state.mPicked = e.target.checked; dirty.add('menu'); schedule(); });
   $('#copyOrder').addEventListener('click', () => copyText(orderText(), 'Menu order'));
+  $$('.fp-pick').forEach(b => b.addEventListener('click', () => pickLayout(b.dataset.layout)));
+  $('#copyAv').addEventListener('click', () => copyText(avOrderText(), 'AV order'));
+  if ($('#printAv')) $('#printAv').addEventListener('click', () => {
+    if (!budget().avLines.length){ toast('No AV picked yet', 'Pick items or load a starter kit first.'); return; }
+    runPrint(buildAvSheet());
+  });
   if ($('#printPicks')){
     $('#printPicks').addEventListener('click', () => printMenu('picks'));
     $('#printAll').addEventListener('click', () => printMenu('all'));
@@ -1137,7 +1240,7 @@ function bindStatic(){
     $('#resetBtn').addEventListener('click', resetData);
   }
 }
-const RENDER = {board:renderBoard, guests:renderGuests, menu:renderMenu, budget:renderBudget};
+const RENDER = {board:renderBoard, guests:renderGuests, menu:renderMenu, budget:renderBudget, room:renderRoom};
 
 /* ---------- live data ---------- */
 function dbErr(e){
@@ -1152,11 +1255,11 @@ function subscribe(){
     changed('board');
   }, dbErr);
   db.collection('guests').onSnapshot(snap => { state.guests = snap.docs.map(cleanGuest); state.loaded.guests = true; changed('guests','budget'); }, dbErr);
-  db.collection('picks').onSnapshot(snap => { const o = {}; snap.docs.forEach(d => { o[d.id] = cleanPick(d); }); state.picks = o; state.loaded.picks = true; changed('menu','budget'); }, dbErr);
-  db.collection('expenses').onSnapshot(snap => { state.expenses = snap.docs.map(cleanExp); state.loaded.expenses = true; changed('budget'); }, dbErr);
+  db.collection('picks').onSnapshot(snap => { const o = {}; snap.docs.forEach(d => { o[d.id] = cleanPick(d); }); state.picks = o; state.loaded.picks = true; changed('menu','budget','room'); }, dbErr);
+  db.collection('expenses').onSnapshot(snap => { state.expenses = snap.docs.map(cleanExp); state.loaded.expenses = true; migrateAvPlaceholders(); changed('budget'); }, dbErr);
   db.doc('settings/budget').onSnapshot(snap => {
     if (!settingsDirty) state.settings = cleanSettings(snap.exists ? snap.data() : {});
-    state.loaded.settings = true; changed('menu','budget');
+    state.loaded.settings = true; changed('menu','budget','room');
   }, dbErr);
 }
 async function connect(){
@@ -1183,7 +1286,8 @@ async function connect(){
 function renderModeUI(){
   const local = state.mode === 'local';
   const tools = $('#dataTools'); if (tools) tools.hidden = !local;
-  const pt = $('#printTools'); if (pt) pt.hidden = !local;   // the Claude viewer can't open a print window
+  const pt = $('#printTools'); if (pt) pt.hidden = !local;
+  const pa = $('#printAv'); if (pa) pa.hidden = !local;   // the Claude viewer can't open a print window
   const hint = $('#shareHint'); if (hint && local) hint.textContent = 'Saved in this browser. Export a backup at the bottom of the page to move it or share it.';
 }
 function exportData(){
