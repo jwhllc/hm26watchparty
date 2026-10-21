@@ -433,6 +433,18 @@ ul.rules b{font-weight:600}
   .ps-sum .tot{font-weight:700;border-top:1pt solid #111;border-bottom:0;padding-top:4pt;font-size:10.5pt}
   .ps-sum .warn{color:#B3141F}
   .ps-note{font-size:7.5pt;color:#555;margin-top:12pt;border-top:.5pt solid #ccc;padding-top:6pt}
+  .ps-tag{display:inline-block;margin:5pt 0 0;padding:1.5pt 5pt;border:.75pt solid #B3141F;color:#B3141F;font-family:var(--font-mono);font-size:7pt;text-transform:uppercase;letter-spacing:.06em}
+  .ps-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8pt;margin:10pt 0 6pt;break-inside:avoid}
+  .ps-kpi{border:.75pt solid #bbb;border-top:3pt solid #522A77;padding:6pt 7pt;display:flex;flex-direction:column;gap:1pt}
+  .ps-kpi .k-l{font-family:var(--font-mono);font-size:6.5pt;text-transform:uppercase;letter-spacing:.06em;color:#555}
+  .ps-kpi .k-v{font-family:var(--font-display);font-weight:700;font-size:17pt;line-height:1.1}
+  .ps-kpi .k-s{font-size:7.5pt;color:#444}
+  .ps-budgetline{margin:2pt 0 0}
+  .ps-sum.full{width:100%;margin:4pt 0 0}
+  .ps-sum .sub{color:#555;font-size:8pt;padding-left:10pt;border-bottom:0}
+  .ps-sum .good span:last-child{color:#17703F}
+  .ps-sum .bad{color:#B3141F}
+  .ps-sum .big{font-size:11pt}
 }
 
 /* Bar plan: hour-by-hour open / cash / closed */
