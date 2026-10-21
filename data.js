@@ -49,6 +49,7 @@ const DEADLINES = [
 const CONTACTS = [
   {who:'Elizabeth Jackson', role:'Catering Sales Manager, Renaissance. Main contact; leave a voicemail if she is away.', vals:['ejackson@renaissancebatonrouge.com','(225) 388-5728']},
   {who:'Tina Buckley', role:'Director of Catering, Renaissance', vals:['tbuckley@renaissancebatonrouge.com','(225) 388-5729']},
+  {who:'Jacob A. Quebedeaux', role:'Director of Event Technology, Encore (the hotel\'s AV company)', vals:['Jacob.Quebedeaux@EncoreGlobal.com','(225) 388-5694']},
   {who:'Renaissance Baton Rouge', role:'Main line · 7000 Bluebonnet Blvd., 70810', vals:['(225) 215-7000']},
   {who:'Hayden Moore', role:'Contract contact', vals:['haydenmoore@lawbr.net','(225) 236-3636']},
   {who:'Josh Howard', role:'Signer and co-contact', vals:['joshwhoward@gmail.com','(225) 247-3343']},
@@ -141,6 +142,24 @@ const MENU = [
     ['buffet-3','Dinner buffet, three entrées','same as above with a third entrée',62,'pp'],
     ['soup','Add a soup','gumbo, bisque, tomato basil and more',5,'pp'],
   ]},
+  {key:'plated', title:'Plated dinner', kind:'food', note:'Seated dinner, 10-guest minimum: one idea is a family dinner in the 12-seat Kullman Boardroom. Includes bread, iced tea and coffee, plus one salad and one dessert you choose. Counts start at 12; change them as needed.', items:[
+    ['pl-chicken','Herb crusted chicken breast','garlic Yukon mashers · grilled asparagus · red wine demi',42,'pp',{def:12}],
+    ['pl-redfish','Blackened redfish','corn maque choux · garlic haricots verts · crawfish étouffée',42,'pp',{def:12}],
+    ['pl-marsala','Chicken marsala','wild mushrooms · garlic Yukon mashers · braised kale',42,'pp',{def:12}],
+    ['pl-porkchop','Braised bone-in pork chop','sweet tea braised · polenta cake · braised collards · bourbon apple glaze',46,'pp',{def:12}],
+    ['pl-salmon','Herb roasted Atlantic salmon','parmesan risotto · grilled asparagus · satsuma beurre blanc',46,'pp',{def:12}],
+    ['pl-stuffed-salmon','Stuffed salmon Renaissance','spinach, mozzarella and lump crab · stone ground grits · contains bacon',55,'pp',{def:12}],
+    ['pl-adobo','Adobo marinated short ribs','cilantro lime rice · cumin carrots · cotija',54,'pp',{def:12}],
+    ['pl-shortrib','Red wine braised short ribs','potato + parsnip purée · charred cauliflower · marcona almonds',54,'pp',{def:12}],
+    ['pl-seafood-pasta','Seafood pasta','Louisiana shrimp · bay scallops · roasted garlic + tasso cream',40,'pp',{def:12}],
+    ['pl-eggplant','Eggplant parmesan','garlic angel hair · basil marinara · roasted squash + zucchini',36,'pp',{def:12}],
+    ['pl-filet6','Filet mignon, 6 oz','truffle mashers · garlic broccolini · red wine demi',52,'pp',{def:12}],
+    ['pl-filet8','Filet mignon, 8 oz','truffle mashers · garlic broccolini · red wine demi',62,'pp',{def:12}],
+    ['pl-filet-redfish','6 oz filet + blackened redfish','fingerling potatoes · braised collards · citrus beurre blanc',65,'pp',{def:12}],
+    ['pl-filet-shrimp','6 oz filet + BBQ shrimp','truffle Yukon mashers · grilled asparagus · NOLA BBQ sauce',65,'pp',{def:12}],
+    ['pl-filet-crab','6 oz filet + crab cake','tasso risotto · garlic broccolini · mushroom port wine demi',70,'pp',{def:12}],
+    ['pl-soup','Add a soup course','gumbo · crab + corn bisque · tomato basil and more',5,'pp',{def:12}],
+  ]},
   {key:'bar', title:'Bar plan', kind:'bar', special:true, note:'Set the bar hour by hour: open bar (the campaign pays), cash bar (guests pay) or closed. Price the open hours per drink with a cap, or as an hourly package.', items:[]},
   {key:'hosted', title:'Extra hosted drinks', kind:'bar', note:'Specific drinks on top of the bar plan, like a round for a toast. The bar plan already estimates open-bar drinks, so only add extras here.', items:[
     ['h-pref','Preferred spirits',"Tito's · Tanqueray · Bacardi · Dewar's · Maker's Mark · Jack Daniel's · Hennessy VS · Patrón",10,'drink'],
@@ -212,8 +231,49 @@ const MENU = [
     ['w-krug','Krug Grand Cuvée','France',450,'bottle'],
   ]},
 ];
+/* Encore event technology price sheet, 2026 (the hotel's in-house AV). Units: each, foot, hour. */
+const AV_MENU = [
+  {key:'av-screens', title:'Screens & projectors', kind:'av', note:'For live returns. Bigger, raised screens read better over a standing crowd than monitors. Ask Jacob what each package includes (projector, screen, cabling) and whether labor is extra.', items:[
+    ['av-proj-meeting','Meeting room projector package','',655,'each',{def:2}],
+    ['av-proj-cradle',"10' cradle projector package",'raised screen',840,'each',{def:2}],
+    ['av-proj-large',"7'6\" × 13'4\" projector package",'widescreen; the largest on the sheet',983,'each',{def:2}],
+    ['av-supp-tripod','Tripod support package','',251,'each',{def:1}],
+    ['av-supp-cradle',"10' cradle support package",'',435,'each',{def:1}],
+    ['av-supp-large',"7'6\" × 13'4\" support package",'',578,'each',{def:1}],
+    ['av-screen-tripod',"Tripod screen (6' or 8')",'screen only',95,'each',{def:2}],
+    ['av-mon-55','Monitor, 55"','',555,'each',{def:2}],
+    ['av-mon-70','Monitor, 70"','',735,'each',{def:2}],
+    ['av-laptop','Laptop computer','to run the results feed',265,'each',{def:1}],
+  ]},
+  {key:'av-sound', title:'Sound', kind:'av', note:"For Hillar's remarks, the emcee and music between band sets. Many bands bring their own sound system; if yours does, it needs hotel approval and an insurance certificate.", items:[
+    ['av-wireless','Wireless microphone package','',484,'each',{def:1}],
+    ['av-wireless-add','Additional wireless microphone','',210,'each',{def:1}],
+    ['av-wired','Wired microphone package','',330,'each',{def:1}],
+    ['av-wired-add','Additional wired microphone','',70,'each',{def:1}],
+    ['av-speaker','Powered speaker with stand','',175,'each',{def:2}],
+    ['av-mixer','3–6 channel mixer','',130,'each',{def:1}],
+    ['av-patch','3.5 mm audio patch','plug a phone or laptop into the sound for the playlist',70,'each',{def:1}],
+  ]},
+  {key:'av-scenic', title:'Stage look & lighting', kind:'av', note:'A drape behind the podium gives the TV live shot a clean background. Uplights can wash the room in campaign purple and red; ask whether colors are included.', items:[
+    ['av-drape','Black velour drape','priced per foot',22,'foot',{def:24}],
+    ['av-uplight','LED accent light','',50,'each',{def:8}],
+  ]},
+  {key:'av-other', title:'Power, labor & extras', kind:'av', note:'Labor rates can vary with complexity and time of day, and some packages may add labor. Confirm with Jacob.', items:[
+    ['av-power','Power strip / extension cord package','for laptops and the TV crew',53,'each',{def:2}],
+    ['av-tech','In-room technician','per hour',115,'hour',{def:4}],
+    ['av-phone','Conference speaker phone','',170,'each',{def:1}],
+    ['av-flip','Flip chart package','',67,'each',{def:1}],
+    ['av-postit','Post-it flip chart package','',90,'each',{def:1}],
+  ]},
+];
+/* One-tap AV starting points: [item id, quantity]. */
+const AV_KITS = [
+  {key:'basic', label:'Basic', items:[['av-proj-meeting',2],['av-wireless',1],['av-patch',1],['av-power',2]]},
+  {key:'big', label:'Big screens', items:[['av-proj-cradle',2],['av-wireless',1],['av-wireless-add',1],['av-patch',1],['av-power',2],['av-tech',4]]},
+  {key:'tv', label:'TV-ready', items:[['av-proj-cradle',2],['av-wireless',1],['av-wireless-add',1],['av-patch',1],['av-power',2],['av-tech',4],['av-drape',24],['av-uplight',8]]},
+];
 const ITEMS = {};
-MENU.forEach(sec => sec.items.forEach(a => {
+MENU.concat(AV_MENU).forEach(sec => sec.items.forEach(a => {
   const [id,name,desc,price,unit,x] = a;
   ITEMS[id] = Object.assign({id,name,desc,price,unit,sec:sec.key,kind:sec.kind}, x||{});
 }));
