@@ -78,6 +78,7 @@
     <button role="tab" id="tab-guests" aria-controls="p-guests" data-tab="guests">Guest list</button>
     <button role="tab" id="tab-menu" aria-controls="p-menu" data-tab="menu">Menu</button>
     <button role="tab" id="tab-budget" aria-controls="p-budget" data-tab="budget">Budget</button>
+    <button role="tab" id="tab-room" aria-controls="p-room" data-tab="room">Room &amp; AV</button>
     <button role="tab" id="tab-venue" aria-controls="p-venue" data-tab="venue">Venue &amp; contract</button>
     <button role="tab" id="tab-flyer" aria-controls="p-flyer" data-tab="flyer">Flyer &amp; contacts</button>
   </nav>
@@ -186,7 +187,7 @@
     </div>
     <div class="jump" id="mJump" aria-label="Jump to a menu section"></div>
     <div id="menuList"></div>
-    <p class="hint mt22">From the Renaissance Meeting + Event Menus, 2026 edition. Evening sections only; breakfast, lunch and plated dinners are left out. Prices can change without notice.</p>
+    <p class="hint mt22">From the Renaissance Evening Events menu, 2026 edition. Prices can change without notice.</p>
   </section>
 
   <!-- BUDGET -->
@@ -242,6 +243,56 @@
     </div>
   </section>
 
+  <!-- ROOM & AV -->
+  <section id="p-room" class="panel" role="tabpanel" aria-labelledby="tab-room" hidden>
+    <div class="db-note" id="roomNote" hidden></div>
+    <h2 class="sec-h">Floor plan</h2>
+    <p class="hint">Two options from the hotel for Salon 1. The room is roughly 35 by 72 feet (about 2,500 square feet), measured from the diagram's scale bar, which is plenty for about 150 at once standing. Both show a riser with a podium, two rounds of eight, eight cocktail tables, a buffet and a bar.</p>
+    <div class="fp-grid">
+      <figure class="fp-card">
+        <div class="fp-img"><img src="floorplan-a.png" width="504" height="903" loading="lazy" alt="Layout A: riser with podium on the short wall at one end, two round tables of eight in front of it, eight cocktail tables in two rows down the middle, buffet along the left wall, bar in the far corner by a double door."></div>
+        <figcaption>
+          <h3>Layout A · Stage on the end wall</h3>
+          <ul class="fp-list">
+            <li class="pro">Bar and buffet lines stay away from the podium.</li>
+            <li class="pro">A clear aisle down the middle gives the TV camera a straight shot of Hillar with the crowd.</li>
+            <li class="con">The back of the room is about 70 feet from the podium. Plan speakers partway back and large, raised screens.</li>
+          </ul>
+          <button class="btn fp-pick" data-layout="A" type="button" aria-pressed="false">Pick this layout</button>
+        </figcaption>
+      </figure>
+      <figure class="fp-card">
+        <div class="fp-img"><img src="floorplan-b.png" width="504" height="1004" loading="lazy" alt="Layout B: riser with podium centered on the long right wall, two round tables of eight in front, eight cocktail tables around them, buffet along the opposite wall, bar in the corner next to the guest entrance."></div>
+        <figcaption>
+          <h3>Layout B · Stage on the long wall</h3>
+          <ul class="fp-list">
+            <li class="pro">No one is more than about 35 feet from the podium, which helps the speech and the TV shot.</li>
+            <li class="pro">Screens can flank the stage where everyone can see them.</li>
+            <li class="con">The bar sits right at the guest entrance and will crowd the door at peak. Ask to move it to the far corner.</li>
+          </ul>
+          <button class="btn fp-pick" data-layout="B" type="button" aria-pressed="false">Pick this layout</button>
+        </figcaption>
+      </figure>
+    </div>
+    <div class="callout fp-missing"><b>Not on either plan yet</b>The two screens, the band's spot and power, a spot or riser for the TV camera with power, a check-in table at the guest entrance, and a place for yard signs and merch. Seating is 16 chairs at two rounds, so consider a few chairs along the walls. The dotted wall looks like a movable partition to the next room; ask whether anything is booked next door that night.</div>
+
+    <h2 class="sec-h mt22">AV</h2>
+    <p class="hint">Encore is the hotel's AV company. Prices are from their 2026 sheet and get the same 24% service charge and 12.5% tax as food.</p>
+    <div class="av-top">
+      <div>
+        <p class="t-label">Starter kits, with service and tax</p>
+        <div class="chips mt12" id="avKits" role="group" aria-label="AV starter kits"></div>
+        <p class="hint">Basic: two meeting room projector packages, a wireless mic, a playlist hookup and power. Big screens: 10-foot cradle screens, two wireless mics and a technician for 4 hours. TV-ready: Big screens plus a 24-foot black drape behind the podium and 8 uplights. Tap a kit again to clear it.</p>
+        <div class="menu-tools">
+          <button class="btn ghost" id="copyAv" type="button">Copy AV order for Encore</button>
+          <button class="btn ghost" id="printAv" type="button" hidden>Print or save AV order as PDF</button>
+        </div>
+      </div>
+      <div class="receipt av-sum" id="avSum" aria-label="AV estimate"></div>
+    </div>
+    <div id="avList"></div>
+  </section>
+
   <!-- VENUE -->
   <section id="p-venue" class="panel" role="tabpanel" aria-labelledby="tab-venue" hidden>
     <div class="vgrid">
@@ -270,7 +321,7 @@
             </tbody>
           </table>
         </div>
-        <p class="hint">The boardroom has a table with 12 swivel chairs and a TV with hookups. Salon 1 is set for 150, which matches the expected peak of about 150 at once.</p>
+        <p class="hint">The boardroom has a table with 12 swivel chairs and a TV with hookups. Salon 1 is set for 150, which matches the expected peak of about 150 at once. Floor plans are on the Room &amp; AV tab.</p>
       </div>
       <div class="card">
         <h3>Money</h3>
