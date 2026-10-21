@@ -44,7 +44,7 @@ const state = {
   tasks:[], guests:[], picks:{}, expenses:[], settings:Object.assign({}, DEFAULT_SETTINGS),
   loaded:{tasks:false, guests:false, picks:false, expenses:false, settings:false},
   tab:'board', view:'deadline', hideDone:false, doneOpen:false,
-  statusFilter:'all', editing:null, drafts:{}, confirm:null,
+  statusFilter:'all', editing:null, drafts:{}, confirm:null, secOpen:{},
   names:{}, badgeBase:null, pop:null, mSearch:'', mPicked:false,
 };
 let db = null, user = null;
@@ -120,9 +120,10 @@ function loadPrefs(){
     if (TABS.includes(p.tab)) state.tab = p.tab;
     if (p.view === 'stream' || p.view === 'deadline') state.view = p.view;
     state.hideDone = !!p.hideDone;
+    if (p.secOpen && typeof p.secOpen === 'object') for (const [k, v] of Object.entries(p.secOpen)) if (typeof v === 'boolean') state.secOpen[k] = v;
   } catch(e){}
 }
-function savePrefs(){ try { localStorage.setItem(PREF_KEY, JSON.stringify({tab:state.tab, view:state.view, hideDone:state.hideDone})); } catch(e){} }
+function savePrefs(){ try { localStorage.setItem(PREF_KEY, JSON.stringify({tab:state.tab, view:state.view, hideDone:state.hideDone, secOpen:state.secOpen})); } catch(e){} }
 
 /* ---------- toasts + confetti ---------- */
 function toast(title, text){
@@ -745,6 +746,36 @@ function renderMenu(){
   if (state.dbStatus === 'off'){ box.replaceChildren(emptyCard('Menu picks live in Claude', 'Open this page in Claude while signed in to pick items. Prices below are for reference.'), ...buildMenu(B, hc, true)); return; }
   withFocus(box, () => box.replaceChildren(...buildMenu(B, hc, false)));
 }
+/* Collapsible menu sections. Searching or "Picked only" opens everything that matches;
+   otherwise a section opens if you opened it last time, or if it has picks. */
+function secIsOpen(key, hasPicks){
+  if (state.mSearch.trim() || state.mPicked) return true;
+  if (key in state.secOpen) return state.secOpen[key];
+  return hasPicks || key === 'bar';
+}
+function collapsible(id, key, title, metaText, hasPicks, note, body){
+  const open = secIsOpen(key, hasPicks);
+  return h('details',{class:'msec', id, open},
+    h('summary',{class:'msec-h', 'data-fk':'sum-' + key, onclick:e => {
+      const d = e.currentTarget.parentElement;
+      setTimeout(() => { state.secOpen[key] = d.open; savePrefs(); }, 0);
+    }},
+      h('h3',{class:'sec-h'}, title),
+      h('span',{class:'msec-meta'}, metaText ? h('span',{class:'msec-sum' + (hasPicks ? '' : ' quiet')}, metaText) : null, h('span',{class:'chev', 'aria-hidden':'true'}))),
+    h('p',{class:'msec-note'}, note), body);
+}
+function setAllSections(keys, open){
+  keys.forEach(k => { state.secOpen[k] = open; }); savePrefs();
+  dirty.add('menu'); dirty.add('room'); schedule();
+}
+function openSection(key, elId){
+  state.secOpen[key] = true; savePrefs(); dirty.add(state.tab); schedule();
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    const el = document.getElementById(elId);
+    if (el) el.scrollIntoView({behavior:reduceMotion() ? 'auto' : 'smooth', block:'start'});
+    else toast('Hidden by your filters', 'Clear the search or "Picked only" to see this section.');
+  }));
+}
 function buildMenu(B, hc){
   const q = state.mSearch.trim().toLowerCase(), pickedOnly = state.mPicked, out = [];
   for (const sec of MENU){
@@ -761,9 +792,10 @@ function buildMenu(B, hc){
       if (!items.length) continue;
       body = items.map(it => menuItem(it, hc));
     }
-    out.push(h('section',{class:'msec', id:'m-' + sec.key},
-      h('div',{class:'msec-h'}, h('h3',{class:'sec-h'}, sec.title), sum ? h('span',{class:'msec-sum'}, fmt0(sum) + ' picked') : null),
-      h('p',{class:'msec-note'}, sec.note), body));
+    const nPicked = sec.special ? 0 : sec.items.filter(x => state.picks[x[0]]).length;
+    const hasPicks = sec.special ? !!(B.plan.openN || B.plan.cashN) : nPicked > 0;
+    const meta = sec.special ? planText() : (sum ? `${nPicked} picked · ${fmt0(sum)}` : `${sec.items.length} items`);
+    out.push(collapsible('m-' + sec.key, sec.key, sec.title, meta, hasPicks && (sec.special ? true : sum > 0), sec.note, body));
   }
   if (!out.length) out.push(emptyCard(pickedOnly ? 'Nothing picked yet' : 'No matches', pickedOnly ? 'Turn off "Picked only" and add items.' : 'Try another search.'));
   return out;
@@ -921,9 +953,8 @@ function renderRoom(){
   if (state.dbStatus === 'off'){ box.replaceChildren(emptyCard('AV picks live in Claude', 'Open this page in Claude while signed in to pick AV. Prices below are for reference.')); return; }
   withFocus(box, () => box.replaceChildren(...AV_MENU.map(sec => {
     const sum = B.avLines.filter(l => l.item.sec === sec.key).reduce((s,l) => s + l.cost, 0);
-    return h('section',{class:'msec', id:'a-' + sec.key},
-      h('div',{class:'msec-h'}, h('h3',{class:'sec-h'}, sec.title), sum ? h('span',{class:'msec-sum'}, fmt0(sum) + ' picked') : null),
-      h('p',{class:'msec-note'}, sec.note), sec.items.map(a => menuItem(ITEMS[a[0]], B.hc)));
+    const nPicked = sec.items.filter(x => state.picks[x[0]]).length;
+    return collapsible('a-' + sec.key, sec.key, sec.title, sum ? `${nPicked} picked · ${fmt0(sum)}` : `${sec.items.length} items`, nPicked > 0, sec.note, sec.items.map(a => menuItem(ITEMS[a[0]], B.hc)));
   })));
 }
 function avOrderText(){
@@ -1172,11 +1203,7 @@ function fillStatic(){
   $('#gGroupF').replaceChildren(h('option',{value:''},'All groups'), ...opt(GROUPS));
   $('#efCat').replaceChildren(...opt(EXP_CATS,'decor'));
   $('#efStatus').replaceChildren(...opt(EXP_STATUS,'estimate'));
-  $('#mJump').replaceChildren(...MENU.map(s => h('button',{type:'button', class:'chip', onclick:() => {
-    const el = document.getElementById('m-' + s.key);
-    if (el) el.scrollIntoView({behavior:reduceMotion() ? 'auto' : 'smooth', block:'start'});
-    else toast('Hidden by your filters', 'Clear the search or "Picked only" to see this section.');
-  }}, s.title.replace("Hors d'oeuvres · ","Hors d'oeuvres, ").replace('Bar · ','Bar, '))));
+  $('#mJump').replaceChildren(...MENU.map(s => h('button',{type:'button', class:'chip', onclick:() => openSection(s.key, 'm-' + s.key)}, s.title.replace("Hors d'oeuvres · ","Hors d'oeuvres, ").replace('Bar · ','Bar, '))));
   const box = $('#contacts');
   CONTACTS.forEach(c => box.append(h('div',{class:'contact'}, h('span',{class:'who'}, c.who), h('span',{class:'role'}, c.role),
     c.vals.map(v => { const span = h('span',null,v); return h('div',{class:'cv'}, span, h('button',{type:'button', class:'linkbtn', onclick:() => copyText(v, v, span)}, 'Copy')); }))));
@@ -1215,6 +1242,10 @@ function bindStatic(){
   $('#copyOrder').addEventListener('click', () => copyText(orderText(), 'Menu order'));
   $$('.fp-pick').forEach(b => b.addEventListener('click', () => pickLayout(b.dataset.layout)));
   $('#copyAv').addEventListener('click', () => copyText(avOrderText(), 'AV order'));
+  $('#menuOpenAll').addEventListener('click', () => setAllSections(MENU.map(s => s.key), true));
+  $('#menuCloseAll').addEventListener('click', () => setAllSections(MENU.map(s => s.key), false));
+  $('#avOpenAll').addEventListener('click', () => setAllSections(AV_MENU.map(s => s.key), true));
+  $('#avCloseAll').addEventListener('click', () => setAllSections(AV_MENU.map(s => s.key), false));
   if ($('#printAv')) $('#printAv').addEventListener('click', () => {
     if (!budget().avLines.length){ toast('No AV picked yet', 'Pick items or load a starter kit first.'); return; }
     runPrint(buildAvSheet());
