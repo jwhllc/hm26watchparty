@@ -256,27 +256,40 @@ const SEED = {
     {
       "id": "av-screens",
       "custom": false,
-      "detail": "For live returns. Prices come from the AV sheet Elizabeth sent Sep 11.",
+      "detail": "Compare options on the Room & AV tab. Bigger, raised screens read better over a standing crowd. Order through Jacob Quebedeaux at Encore.",
       "done": false,
       "doneAt": null,
       "doneBy": null,
       "due": "2026-10-26",
       "order": 19,
       "stream": "venue",
-      "title": "Order AV: two projectors and two screens",
+      "title": "Order screens for the returns",
       "votes": 20
     },
     {
       "id": "av-band",
       "custom": false,
-      "detail": "Music between sets. The hotel controls volume.",
+      "detail": "A mic for Hillar's remarks and sound between band sets. Ask the band whether they bring their own system. Prices are on the Room & AV tab.",
       "done": false,
       "doneAt": null,
       "doneBy": null,
       "due": "2026-10-26",
       "order": 20,
       "stream": "venue",
-      "title": "Order AV for the band: mic and speakers",
+      "title": "Order sound for remarks and the band",
+      "votes": 20
+    },
+    {
+      "id": "floor-plan",
+      "custom": false,
+      "detail": "Two options on the Room & AV tab. Neither shows the screens, band, TV camera spot or check-in table yet, so mark those up for Elizabeth.",
+      "done": false,
+      "doneAt": null,
+      "doneBy": null,
+      "due": "2026-10-26",
+      "order": 20.5,
+      "stream": "venue",
+      "title": "Pick a floor plan",
       "votes": 20
     },
     {
@@ -661,28 +674,6 @@ const SEED = {
       "vendor": ""
     },
     {
-      "id": "av-projectors",
-      "addedAt": "2026-10-19",
-      "amount": 0,
-      "cat": "av",
-      "label": "AV: two projectors + two screens",
-      "notes": "From Elizabeth's AV price sheet.",
-      "order": 2,
-      "status": "estimate",
-      "vendor": ""
-    },
-    {
-      "id": "av-band",
-      "addedAt": "2026-10-19",
-      "amount": 0,
-      "cat": "av",
-      "label": "AV: band mic + speakers",
-      "notes": "From Elizabeth's AV price sheet.",
-      "order": 3,
-      "status": "estimate",
-      "vendor": ""
-    },
-    {
       "id": "signs",
       "addedAt": "2026-10-19",
       "amount": 0,
@@ -729,6 +720,7 @@ const SEED = {
       "dph": 1,
       "avg": 8,
       "cap": 0
-    }
+    },
+    "layout": null
   }
 };
