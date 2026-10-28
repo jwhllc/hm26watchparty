@@ -75,6 +75,7 @@
 <div class="wrap">
   <nav class="tabs" role="tablist" aria-label="Sections">
     <button role="tab" id="tab-board" aria-controls="p-board" data-tab="board">Race board</button>
+    <button role="tab" id="tab-list" aria-controls="p-list" data-tab="list">Checklist</button>
     <button role="tab" id="tab-guests" aria-controls="p-guests" data-tab="guests">Guest list</button>
     <button role="tab" id="tab-menu" aria-controls="p-menu" data-tab="menu">Menu</button>
     <button role="tab" id="tab-budget" aria-controls="p-budget" data-tab="budget">Budget</button>
@@ -111,6 +112,44 @@
       </fieldset>
     </form>
     <div id="taskList"></div>
+  </section>
+
+  <!-- CHECKLIST -->
+  <section id="p-list" class="panel" role="tabpanel" aria-labelledby="tab-list" hidden>
+    <div class="db-note" id="listNote" hidden></div>
+    <div class="board-head">
+      <h2 class="sec-h">Checklist</h2>
+      <div class="seg" id="clView" role="group" aria-label="Show">
+        <button type="button" data-cl="all" aria-pressed="true">All</button>
+        <button type="button" data-cl="lead" aria-pressed="false">Leading up</button>
+        <button type="button" data-cl="day" aria-pressed="false">Day of</button>
+        <button type="button" data-cl="grab" aria-pressed="false">Grab &amp; bring</button>
+      </div>
+    </div>
+    <p class="hint">Cross things off as they happen. Every item is worth votes and counts toward precincts reporting. Tap Edit to change or remove one.</p>
+    <div class="cl-tools">
+      <select id="clWho" aria-label="Show items for"></select>
+      <label class="chk"><input type="checkbox" id="clHide"> Hide crossed off</label>
+      <span class="cl-tools-r">
+        <button class="btn ghost" id="clCopy" type="button">Copy as text</button>
+        <button class="btn ghost" id="clPrint" type="button" hidden>Print or save as PDF</button>
+        <button class="btn" id="clAddBtn" type="button" aria-expanded="false" aria-controls="clForm">Add an item</button>
+      </span>
+    </div>
+    <form id="clForm" hidden>
+      <fieldset class="form" id="clSet">
+        <legend class="sr">New checklist item</legend>
+        <label class="span2">What<input id="cfTitle" maxlength="140" required autocomplete="off" placeholder="Grab the extension cords"></label>
+        <label>List<select id="cfList"></select></label>
+        <label>Time<input id="cfTime" type="time" step="300"></label>
+        <label>Who's on it<input id="cfWho" maxlength="40" autocomplete="off" list="clWhoList" placeholder="Name"></label>
+        <label class="span2">Notes<input id="cfNotes" maxlength="200" autocomplete="off"></label>
+        <label>Worth<select id="cfVotes"><option value="10">Small · 10 votes</option><option value="20" selected>Medium · 20 votes</option><option value="50">Big · 50 votes</option></select></label>
+        <div class="form-actions"><button class="btn primary" type="submit">Add item</button><button class="btn ghost" type="button" id="cfCancel">Cancel</button></div>
+      </fieldset>
+    </form>
+    <datalist id="clWhoList"></datalist>
+    <div id="clList"></div>
   </section>
 
   <!-- GUESTS -->
