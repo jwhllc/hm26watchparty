@@ -3,8 +3,9 @@
 'use strict';
 
 /* ---------- constants ---------- */
-const TABS = ['board','guests','menu','budget','room','venue','flyer'];
-const PANELS = ['board','guests','menu','budget','room'];
+const TABS = ['board','list','guests','menu','budget','room','venue','flyer'];
+const PANELS = ['board','list','guests','menu','budget','room'];
+const EVENT_DAY = '2026-11-03', DAY_AFTER = '2026-11-04';
 const DOORS = Date.UTC(2026,10,3,23,0,0);     // 5:00 PM CST, Nov 3
 const WRAP_UP = Date.UTC(2026,10,4,6,0,0);    // midnight CST
 const SVC = 0.24, TAX = 0.125, MIN_FB = 5000, DEPOSIT = 767.30, BOARDROOM = 500;
@@ -19,7 +20,7 @@ const BAR_PRESETS = [
   {label:'No bar',                slots:['off','off','off','off','off','off','off']},
 ];
 const DEFAULT_SETTINGS = {headcount:300, peak:null, cap:0, target:0, bartenders:null, cashierCount:null, bar:DEFAULT_BAR, layout:null};
-const OFF_MSG = 'The shared board, guest list, menu picks and budget load when this page is opened in Claude while signed in. The Venue and Flyer tabs work anywhere.';
+const OFF_MSG = 'The shared board, checklist, guest list, menu picks and budget load when this page is opened in Claude while signed in. The Venue and Flyer tabs work anywhere.';
 const LOCAL_WARN = "This browser isn't saving changes (a private window or blocked storage). Export a backup before you close the tab.";
 const RO_MSG = "You're viewing. Checking things off and editing need Contributor or Editor access from Josh.";
 
@@ -32,17 +33,21 @@ const BADGES = [
   {id:'feast',   name:'Feast Mode',        hint:'Menu picks clear the $5,000 minimum',   test:s=>s.budget.fb >= MIN_FB},
   {id:'count',   name:'Headcount Locked',  hint:'Send the final headcount',              test:s=>s.has('final-count')},
   {id:'books',   name:'Balanced Books',    hint:'Every cost priced and under the ceiling',   test:s=>s.budget.cap>0 && state.expenses.length>0 && s.budget.unpriced===0 && s.budget.all<=s.budget.cap},
-  {id:'half',    name:'Halfway Reporting', hint:'Finish half the to-dos',                test:s=>s.total>0 && s.done*2>=s.total},
+  {id:'countdown', name:'Countdown Clear', hint:'Cross off everything on Leading up',    test:s=>s.cl.lead.total>0 && s.cl.lead.done===s.cl.lead.total},
+  {id:'packed',  name:'Bags Packed',       hint:'Cross off every Grab & bring item',     test:s=>s.cl.grab.total>0 && s.cl.grab.done===s.cl.grab.total},
+  {id:'doors',   name:'Doors Ready',       hint:'Every day-of item before 5 PM done',    test:s=>s.cl.doors.total>0 && s.cl.doors.done===s.cl.doors.total},
+  {id:'half',    name:'Halfway Reporting', hint:'Finish half the to-dos and checklist',  test:s=>s.total>0 && s.done*2>=s.total},
   {id:'century', name:'Century Club',      hint:'Invite 100 people',                     test:s=>s.invitedNames>=100},
   {id:'full',    name:'Full House',        hint:'150 confirmed guests',                  test:s=>s.confirmed>=150},
-  {id:'called',  name:'Race Called',       hint:'Finish every to-do',                    test:s=>s.total>0 && s.done===s.total},
+  {id:'called',  name:'Race Called',       hint:'Finish every to-do and checklist item', test:s=>s.total>0 && s.done===s.total},
 ];
 
 /* ---------- state ---------- */
 const state = {
   dbStatus:'pending', mode:'pending', readOnly:false, me:null, quietUntil:0,
-  tasks:[], guests:[], picks:{}, expenses:[], settings:Object.assign({}, DEFAULT_SETTINGS),
-  loaded:{tasks:false, guests:false, picks:false, expenses:false, settings:false},
+  tasks:[], checklist:[], guests:[], picks:{}, expenses:[], settings:Object.assign({}, DEFAULT_SETTINGS),
+  loaded:{tasks:false, checklist:false, guests:false, picks:false, expenses:false, settings:false},
+  clView:'all', clHide:false, clWho:'', clEditing:null, clDrafts:{},
   tab:'board', view:'deadline', hideDone:false, doneOpen:false,
   statusFilter:'all', editing:null, drafts:{}, confirm:null, secOpen:{},
   names:{}, badgeBase:null, pop:null, mSearch:'', mPicked:false,
@@ -120,10 +125,13 @@ function loadPrefs(){
     if (TABS.includes(p.tab)) state.tab = p.tab;
     if (p.view === 'stream' || p.view === 'deadline') state.view = p.view;
     state.hideDone = !!p.hideDone;
+    if (['all','lead','day','grab'].includes(p.clView)) state.clView = p.clView;
+    state.clHide = !!p.clHide;
+    if (typeof p.clWho === 'string') state.clWho = p.clWho.slice(0,40);
     if (p.secOpen && typeof p.secOpen === 'object') for (const [k, v] of Object.entries(p.secOpen)) if (typeof v === 'boolean') state.secOpen[k] = v;
   } catch(e){}
 }
-function savePrefs(){ try { localStorage.setItem(PREF_KEY, JSON.stringify({tab:state.tab, view:state.view, hideDone:state.hideDone, secOpen:state.secOpen})); } catch(e){} }
+function savePrefs(){ try { localStorage.setItem(PREF_KEY, JSON.stringify({tab:state.tab, view:state.view, hideDone:state.hideDone, secOpen:state.secOpen, clView:state.clView, clHide:state.clHide, clWho:state.clWho})); } catch(e){} }
 
 /* ---------- toasts + confetti ---------- */
 function toast(title, text){
@@ -293,13 +301,17 @@ function budget(){
 
 /* ---------- stats ---------- */
 function stats(){
-  const T = state.tasks, total = T.length, doneList = T.filter(t => t.done), done = doneList.length;
-  const ids = new Set(doneList.map(t => t.id));
-  const votesAll = T.reduce((a,t)=>a+t.votes,0), votes = doneList.reduce((a,t)=>a+t.votes,0);
+  // Precincts and votes count the Race board and the Checklist together.
+  const T = state.tasks, C = state.checklist, A = T.concat(C), total = A.length, doneList = A.filter(t => t.done), done = doneList.length;
+  const ids = new Set(T.filter(t => t.done).map(t => t.id));
+  const votesAll = A.reduce((a,t)=>a+t.votes,0), votes = doneList.reduce((a,t)=>a+t.votes,0);
+  const tally = list => ({total:list.length, done:list.filter(x => x.done).length});
+  const cl = {lead:tally(C.filter(x => x.list === 'lead')), day:tally(C.filter(x => x.list === 'day')), grab:tally(C.filter(x => x.list === 'grab')),
+    doors:tally(C.filter(x => x.list === 'day' && x.time && timeKey(x.time) < 17*60))};
   const pct = total ? (done === total ? 100 : Math.floor(done/total*100)) : 0;
   const streams = STREAMS.map(s => { const ts = T.filter(t => t.stream === s.key); return {key:s.key, total:ts.length, done:ts.filter(t=>t.done).length}; });
   const G = state.guests, ppl = st => G.filter(g => g.status === st).reduce((a,g)=>a+1+g.plusOnes,0);
-  return {total, done, pct, votes, votesAll, streams, has:id => ids.has(id),
+  return {total, done, pct, votes, votesAll, streams, cl, has:id => ids.has(id),
     confirmed:ppl('yes'), maybe:ppl('maybe'), awaiting:ppl('invited'), declined:ppl('no'), notInvited:ppl('todo'),
     invitedNames:G.filter(g => g.status !== 'todo').length, budget:budget()};
 }
@@ -325,7 +337,8 @@ function flush(){
   renderSummary();
   for (const p of PANELS){
     if (!dirty.has(p) || state.tab !== p) continue;
-    if (p === 'guests' && document.activeElement && document.activeElement.closest && document.activeElement.closest('#guestList .g-edit')) continue;
+    if (p === 'guests' && document.activeElement && /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName) && document.activeElement.closest('#guestList .g-edit')) continue;
+    if (p === 'list' && document.activeElement && /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName) && document.activeElement.closest('#clList .g-edit')) continue;
     dirty.delete(p); RENDER[p]();
   }
 }
@@ -354,14 +367,14 @@ function roomText(B){
 
 /* ---------- summary: ticker, hero bars, tiles ---------- */
 function renderSummary(){
-  const st = stats(), on = state.dbStatus === 'on' && state.loaded.tasks;
+  const st = stats(), on = state.dbStatus === 'on' && state.loaded.tasks && state.loaded.checklist;
   $('#tkPct').textContent = on ? st.pct + '%' : '--%';
   $('#tkVotes').textContent = on ? nf.format(st.votes) : '--';
   $('#tPct').textContent = on ? st.pct + '%' : '--';
-  $('#tPctSub').textContent = on ? `${st.done} of ${st.total} to-dos in` : (state.dbStatus === 'off' ? 'Opens in Claude' : 'Loading the board');
+  $('#tPctSub').textContent = on ? `${st.done} of ${st.total} to-dos and checklist items` : (state.dbStatus === 'off' ? 'Opens in Claude' : 'Loading the board');
   $('#tPctBar').style.width = (on ? st.pct : 0) + '%';
   $('#tVotes').textContent = on ? nf.format(st.votes) : '--';
-  $('#tVotesSub').textContent = on ? `of ${nf.format(st.votesAll)} up for grabs` : 'Every to-do is worth votes';
+  $('#tVotesSub').textContent = on ? `of ${nf.format(st.votesAll)} up for grabs` : 'Every to-do and checklist item is worth votes';
   const gOn = state.dbStatus === 'on' && state.loaded.guests;
   $('#tGuests').textContent = gOn ? nf.format(st.confirmed) : '--';
   $('#tGuestsSub').textContent = gOn ? `${nf.format(st.maybe)} maybe · 300 expected` : 'Includes +1s';
@@ -417,8 +430,8 @@ function noteFor(id){
 }
 function syncControls(){
   const ro = !canWrite();
-  ['#taskSet','#guestSet','#exSet'].forEach(s => { $(s).disabled = ro; });
-  ['#addTaskBtn','#pasteBtn','#hcMenu','#hcBudget','#peakMenu','#peakBudget','#capInput','#targetInput','#useGuests'].forEach(s => { $(s).disabled = ro; });
+  ['#taskSet','#clSet','#guestSet','#exSet'].forEach(s => { $(s).disabled = ro; });
+  ['#addTaskBtn','#clAddBtn','#pasteBtn','#hcMenu','#hcBudget','#peakMenu','#peakBudget','#capInput','#targetInput','#useGuests'].forEach(s => { $(s).disabled = ro; });
 }
 
 /* ---------- race board ---------- */
@@ -509,7 +522,7 @@ function buildTasks(){
 }
 function renderBoard(){
   noteFor('#boardNote');
-  $$('.board-head .seg button').forEach(b => b.setAttribute('aria-pressed', b.dataset.view === state.view ? 'true' : 'false'));
+  $$('#p-board .board-head .seg button').forEach(b => b.setAttribute('aria-pressed', b.dataset.view === state.view ? 'true' : 'false'));
   $('#hideDone').checked = state.hideDone;
   renderStickers(stats());
   const box = $('#taskList');
@@ -517,8 +530,185 @@ function renderBoard(){
   resolveNames(state.tasks.filter(t => t.done && t.doneBy).map(t => t.doneBy));
 }
 function arm(key){
-  state.confirm = key; changed('guests','budget');
-  setTimeout(() => { if (state.confirm === key){ state.confirm = null; changed('guests','budget'); } }, 4000);
+  state.confirm = key; changed('guests','budget','list');
+  setTimeout(() => { if (state.confirm === key){ state.confirm = null; changed('guests','budget','list'); } }, 4000);
+}
+
+/* ---------- checklist ---------- */
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+const listOf = k => CHECK_LISTS.find(l => l.key === k) || CHECK_LISTS[0];
+function fmtTime(t){
+  const [hh, mm] = t.split(':').map(Number);
+  return `${hh % 12 || 12}:${String(mm).padStart(2,'0')} ${hh < 12 ? 'AM' : 'PM'}`;
+}
+// Sort key in minutes; anything before 6 AM counts as after midnight, so 12:00 AM sorts last.
+const timeKey = t => { if (!t) return 1e5; const [hh, mm] = t.split(':').map(Number); return (hh < 6 ? hh + 24 : hh)*60 + mm; };
+function eventNow(){
+  // Minutes into election night (Chicago time), or null when it isn't Nov 3 (or the small hours of Nov 4).
+  try {
+    const p = Object.fromEntries(new Intl.DateTimeFormat('en-US',{timeZone:'America/Chicago',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'})
+      .formatToParts(new Date()).map(x => [x.type, x.value]));
+    const iso = `${p.year}-${p.month}-${p.day}`, hh = Number(p.hour) % 24, mm = Number(p.minute);
+    if (iso === EVENT_DAY && hh >= 6) return hh*60 + mm;
+    if (iso === DAY_AFTER && hh < 6) return (hh + 24)*60 + mm;
+  } catch(e){}
+  return null;
+}
+function cleanItem(d){
+  const x = d.data() || {};
+  return {id:d.id, title:str(x.title,140) || 'Untitled item', list:CHECK_LISTS.some(l => l.key === x.list) ? x.list : 'lead',
+    time:TIME_RE.test(x.time) ? x.time : null, who:str(x.who,40), notes:str(x.notes,200),
+    votes:clamp(Math.round(num(x.votes,10)),0,100), done:x.done === true,
+    doneBy:typeof x.doneBy === 'string' ? x.doneBy : null, doneAt:typeof x.doneAt === 'string' ? x.doneAt : null,
+    order:num(x.order,9999)};
+}
+function clSort(list){
+  return list === 'day'
+    ? (a,b) => timeKey(a.time) - timeKey(b.time) || a.order - b.order || a.title.localeCompare(b.title)
+    : (a,b) => a.order - b.order || a.title.localeCompare(b.title);
+}
+function clPeople(){
+  const seen = new Map();
+  state.checklist.forEach(it => { const k = it.who.toLowerCase(); if (k && !seen.has(k)) seen.set(k, it.who); });
+  return [...seen.entries()].sort((a,b) => a[1].localeCompare(b[1]));
+}
+function clMatchWho(it){
+  const w = state.clWho;
+  if (!w) return true;
+  if (w === '__none') return !it.who;
+  return it.who.toLowerCase() === w;
+}
+function clSections(){
+  // The lists in view, each with the items that pass the person filter (crossed-off items included).
+  const keys = state.clView === 'all' ? CHECK_LISTS.map(l => l.key) : [state.clView];
+  return keys.map(k => ({L:listOf(k), items:state.checklist.filter(it => it.list === k && clMatchWho(it)).sort(clSort(k))}));
+}
+function renderChecklist(){
+  noteFor('#listNote');
+  $$('#clView button').forEach(b => b.setAttribute('aria-pressed', b.dataset.cl === state.clView ? 'true' : 'false'));
+  $('#clHide').checked = state.clHide;
+  const people = clPeople();
+  if (state.clWho && state.clWho !== '__none' && !people.some(([k]) => k === state.clWho)) state.clWho = '';
+  $('#clWho').replaceChildren(h('option',{value:'', selected:!state.clWho}, 'Everyone'),
+    ...people.map(([k, v]) => h('option',{value:k, selected:state.clWho === k}, v)),
+    h('option',{value:'__none', selected:state.clWho === '__none'}, 'No one yet'));
+  $('#clWhoList').replaceChildren(...people.map(([, v]) => h('option',{value:v})));
+  const box = $('#clList');
+  withFocus(box, () => box.replaceChildren(...buildChecklist()));
+  resolveNames(state.checklist.filter(it => it.done && it.doneBy).map(it => it.doneBy));
+}
+function buildChecklist(){
+  if (state.dbStatus === 'off') return [emptyCard('The checklist lives in Claude', 'Open this page in Claude while signed in to see and cross off the shared checklist.')];
+  if (state.dbStatus === 'pending' || !state.loaded.checklist) return [emptyCard('Loading the checklist', 'Items appear here in a moment.')];
+  if (!state.checklist.length) return [emptyCard('Nothing on the checklist yet', 'Use "Add an item" to start it.')];
+  const out = [], now = eventNow(), ro = !canWrite();
+  for (const {L, items} of clSections()){
+    const done = items.filter(it => it.done).length, pct = items.length ? done/items.length*100 : 0;
+    let next = null;
+    if (L.key === 'day' && now !== null) next = items.find(it => !it.done && it.time && timeKey(it.time) >= now) || null;
+    const shown = state.clHide ? items.filter(it => !it.done) : items;
+    out.push(h('section',{class:'cl-sec cl-' + L.key, 'aria-label':L.label},
+      h('h3',{class:'grp'}, h('span',{class:'when'}, L.label), h('span',null, L.sub),
+        h('span',{class:'gv'}, items.length ? `${done} of ${items.length} crossed off` : 'Empty'),
+        ro ? null : h('button',{type:'button', class:'linkbtn', 'data-fk':'cla-' + L.key, onclick:() => openClForm(L.key)}, '+ Add')),
+      h('div',{class:'cl-bar', role:'img', 'aria-label':`${L.label}: ${done} of ${items.length} crossed off`}, h('i',{style:'width:' + pct.toFixed(1) + '%'})),
+      shown.length ? h('ul',{class:'tl'}, shown.map(it => clRow(it, {next:next === it, late:L.key === 'day' && now !== null && !it.done && !!it.time && timeKey(it.time) < now})))
+        : emptyCard(items.length ? 'All crossed off' : (state.clWho ? 'Nothing for this person' : 'Nothing here yet'),
+            items.length ? `Every item on ${L.label} is done.` : 'Use "+ Add" to put something on this list.')));
+  }
+  return out;
+}
+function clRow(it, ctx){
+  if (state.clEditing === it.id) return clEditRow(it);
+  const ro = !canWrite(), meta = [];
+  if (ctx.next) meta.push(h('span',{class:'cl-next'}, 'Next up'));
+  if (ctx.late) meta.push(h('span',{class:'due'}, 'Past time'));
+  if (it.who) meta.push(h('span',{class:'tag'}, it.who));
+  if (it.done){
+    const when = fmtStamp(it.doneAt);
+    if (it.doneBy){ const tpl = `Crossed off${when ? ' ' + when : ''} by {n}`; meta.push(h('span',{class:'by','data-uid':it.doneBy,'data-tpl':tpl}, tpl.replace('{n}', nameFor(it.doneBy)))); }
+    else meta.push(h('span',{class:'by'}, when ? `Crossed off ${when}` : 'Crossed off'));
+  }
+  return h('li',{class:'task cl' + (it.done ? ' is-done' : '') + (ctx.late ? ' is-overdue' : '') + (ctx.next ? ' is-next' : '')},
+    h('button',{type:'button', class:'oval', 'aria-pressed':it.done ? 'true' : 'false', 'aria-label':(it.done ? 'Undo crossing off: ' : 'Cross off: ') + it.title,
+      'data-fk':'co-' + it.id, disabled:ro, onclick:e => toggleItem(it.id, e.currentTarget)}),
+    h('div',null,
+      it.time ? h('div',{class:'cl-time'}, fmtTime(it.time)) : null,
+      h('div',{class:'t-title'}, it.title),
+      it.notes ? h('div',{class:'t-detail'}, it.notes) : null,
+      meta.length ? h('div',{class:'t-meta'}, meta) : null),
+    h('span',{class:'votes'}, '+' + it.votes),
+    ro ? h('span') : h('button',{type:'button', class:'linkbtn', 'data-fk':'ce-' + it.id, 'aria-label':'Edit ' + it.title,
+      onclick:() => { state.clEditing = it.id; dirty.add('list'); schedule(); }}, 'Edit'));
+}
+function clEditRow(it){
+  const d = state.clDrafts[it.id] || (state.clDrafts[it.id] = {title:it.title, list:it.list, time:it.time || '', who:it.who, notes:it.notes, votes:String(it.votes)});
+  const upd = k => e => { d[k] = e.target.value; };
+  const armed = state.confirm === 'item:' + it.id;
+  const worth = [10,20,50].includes(Number(d.votes)) ? [10,20,50] : [10,20,50,Number(d.votes)].sort((a,b) => a-b);
+  return h('li',{class:'cl-edit g-edit', onkeydown:e => {
+      if (e.key === 'Enter' && e.target.tagName === 'INPUT'){ e.preventDefault(); saveItem(it.id); }
+      else if (e.key === 'Escape'){ e.preventDefault(); closeClEdit(it.id); }
+    }},
+    h('div',{class:'g-edit-grid'},
+      h('label',{class:'field span2'}, 'What', h('input',{value:d.title, maxlength:140, 'data-fk':'cet-' + it.id, oninput:upd('title')})),
+      h('label',{class:'field'}, 'List', h('select',{'data-fk':'cel-' + it.id, onchange:upd('list')}, CHECK_LISTS.map(l => h('option',{value:l.key, selected:l.key === d.list}, l.label)))),
+      h('label',{class:'field'}, 'Time', h('input',{type:'time', step:300, value:d.time, 'data-fk':'cetm-' + it.id, oninput:upd('time')})),
+      h('label',{class:'field'}, "Who's on it", h('input',{value:d.who, maxlength:40, list:'clWhoList', autocomplete:'off', 'data-fk':'cew-' + it.id, oninput:upd('who')})),
+      h('label',{class:'field span2'}, 'Notes', h('input',{value:d.notes, maxlength:200, 'data-fk':'cen-' + it.id, oninput:upd('notes')})),
+      h('label',{class:'field'}, 'Worth', h('select',{'data-fk':'cev-' + it.id, onchange:upd('votes')}, worth.map(v => h('option',{value:String(v), selected:String(v) === String(d.votes)}, `${v} votes`))))),
+    h('div',{class:'g-edit-actions'},
+      h('button',{type:'button', class:'btn primary sm', 'data-fk':'ces-' + it.id, onclick:() => saveItem(it.id)}, 'Save'),
+      h('button',{type:'button', class:'btn ghost sm', onclick:() => closeClEdit(it.id)}, 'Cancel'),
+      h('button',{type:'button', class:'btn danger sm', 'data-fk':'cer-' + it.id, onclick:() => armed ? removeItem(it.id) : arm('item:' + it.id)}, armed ? 'Confirm remove' : 'Remove')));
+}
+function closeClEdit(id){
+  const a = document.activeElement, inRow = !!(a && a.closest && a.closest('#clList .g-edit'));
+  if (inRow) a.blur();
+  delete state.clDrafts[id]; state.clEditing = null; dirty.add('list'); schedule();
+  if (inRow) requestAnimationFrame(() => requestAnimationFrame(() => { const b = $('[data-fk="ce-' + id + '"]'); if (b) b.focus({preventScroll:true}); }));
+}
+function openClForm(list){
+  const f = $('#clForm'); f.hidden = false; $('#clAddBtn').setAttribute('aria-expanded','true');
+  if (list){ $('#cfList').value = list; $('#cfVotes').value = String(listOf(list).votes); }
+  f.scrollIntoView({block:'nearest', behavior:reduceMotion() ? 'auto' : 'smooth'});
+  $('#cfTitle').focus({preventScroll:true});
+}
+function checklistText(){
+  const out = [`HM26 Watch Party checklist · ${fmtDate(todayISO())}`];
+  if (state.clWho) out.push(state.clWho === '__none' ? 'Items with no one on them yet' : `Items for ${(clPeople().find(([k]) => k === state.clWho) || [,''])[1]}`);
+  for (const {L, items} of clSections()){
+    const shown = state.clHide ? items.filter(it => !it.done) : items;
+    out.push('', L.key === 'day' ? 'DAY OF · TUE, NOV 3' : L.label.toUpperCase());
+    if (!shown.length) out.push('(nothing here)');
+    shown.forEach(it => out.push(`${it.done ? '[x]' : '[ ]'} ${it.time ? fmtTime(it.time) + '  ' : ''}${it.title}${it.who ? ' (' + it.who + ')' : ''}${it.notes ? ' · ' + it.notes : ''}`));
+  }
+  return out.join('\n');
+}
+function buildChecklistSheet(){
+  const out = [], logo = $('.plate img');
+  const who = state.clWho ? (state.clWho === '__none' ? 'Items with no one on them yet · ' : `Items for ${(clPeople().find(([k]) => k === state.clWho) || [,''])[1]} · `) : '';
+  out.push(h('div',{class:'ps-head'},
+    h('div',null, h('p',{class:'ps-title'}, 'Checklist'),
+      h('p',{class:'ps-meta'}, 'Hillar Moore Election Night Watch Party · Tuesday, Nov 3, 2026 · Renaissance Baton Rouge, Salon 1 · Doors 5 PM, wrap at midnight'),
+      h('p',{class:'ps-meta'}, `${who}Printed ${fmtDate(todayISO(), {year:'numeric'})}`)),
+    logo ? h('img',{class:'ps-logo', src:logo.src, alt:'Hillar Moore DA'}) : null));
+  for (const {L, items} of clSections()){
+    const shown = state.clHide ? items.filter(it => !it.done) : items;
+    if (!shown.length) continue;
+    const timed = L.key === 'day';
+    out.push(h('h2',{class:'ps-sec'}, L.key === 'day' ? 'Day of · Tuesday, Nov 3' : L.label));
+    out.push(h('table',{class:'ps-table ps-cl'},
+      h('colgroup',null, h('col',{style:'width:5%'}), timed ? h('col',{style:'width:12%'}) : null, h('col'), h('col',{style:'width:18%'})),
+      h('thead',null, h('tr',null, h('th',null, h('span',{class:'sr'}, 'Done')), timed ? h('th',null,'Time') : null, h('th',null,'Item'), h('th',null,"Who's on it"))),
+      h('tbody',null, shown.map(it => h('tr',{class:it.done ? 'done' : null},
+        h('td',null, h('span',{class:'ps-box'}, it.done ? '✓' : '')),
+        timed ? h('td',{class:'n tl'}, it.time ? fmtTime(it.time) : 'Anytime') : null,
+        h('td',null, it.title, it.notes ? h('span',{class:'d'}, it.notes) : null),
+        h('td',null, it.who || ''))))));
+  }
+  if (out.length === 1) out.push(h('p',{class:'ps-note'}, 'Nothing to print with these filters.'));
+  return out;
 }
 
 /* ---------- guests ---------- */
@@ -1166,6 +1356,59 @@ async function addTask(ev){
   const ok = await guarded('newtask', () => db.collection('tasks').add(doc));
   if (ok){ $('#tfTitle').value = ''; $('#tfDue').value = ''; toast('Added to the board', title); $('#tfTitle').focus(); }
 }
+async function toggleItem(id, el){
+  const it = state.checklist.find(x => x.id === id); if (!it || !canWrite() || pending.has('c:'+id)) return;
+  const done = !it.done;
+  if (done){
+    mine.add(id);
+    const r = el && el.getBoundingClientRect();
+    if (r) confetti.burst(r.left + r.width/2, r.top + r.height/2, 34, .8);
+    const left = state.checklist.filter(x => x.list === it.list && !x.done && x.id !== id).length;
+    if (left === 0){ toast(`${listOf(it.list).label}: all crossed off`, `+${it.votes} votes · ${it.title}`); setTimeout(() => confetti.rain(), 250); }
+    else toast(`+${it.votes} votes`, it.title);
+  }
+  const ok = await guarded('c:'+id, () => db.doc('checklist/' + id).update({done, doneBy:done ? meId() : null, doneAt:done ? nowISO() : null}));
+  if (!ok) mine.delete(id);
+}
+async function announceRemoteItem(it){
+  if (state.mode === 'local') return;
+  if (it.doneBy && !state.names[it.doneBy]) await resolveNames([it.doneBy]);
+  toast(`${it.doneBy && state.names[it.doneBy] ? state.names[it.doneBy] : 'A teammate'} crossed off`, `${it.title} · +${it.votes} votes`);
+  confetti.burst(innerWidth/2, 60, 26, .7);
+}
+function itemFields(src){
+  const title = (src.title || '').trim().slice(0,140);
+  const time = TIME_RE.test(src.time || '') ? src.time : null;
+  return {title, list:CHECK_LISTS.some(l => l.key === src.list) ? src.list : 'lead', time,
+    who:(src.who || '').trim().slice(0,40), notes:(src.notes || '').trim().slice(0,200), votes:clamp(Math.round(num(src.votes,20)),0,100)};
+}
+async function addItem(ev){
+  ev.preventDefault(); if (!canWrite()) return;
+  const f = itemFields({title:$('#cfTitle').value, list:$('#cfList').value, time:$('#cfTime').value, who:$('#cfWho').value, notes:$('#cfNotes').value, votes:$('#cfVotes').value});
+  if (!f.title){ $('#cfTitle').focus(); return; }
+  const doc = Object.assign(f, {done:false, doneBy:null, doneAt:null, order:1000 + state.checklist.length, addedBy:meId(), addedAt:nowISO()});
+  const ok = await guarded('newitem', () => db.collection('checklist').add(doc));
+  if (!ok) return;
+  ['#cfTitle','#cfTime','#cfNotes'].forEach(s => { $(s).value = ''; });
+  // Make sure the new item is visible.
+  if (state.clView !== 'all' && state.clView !== f.list) state.clView = f.list;
+  if (state.clWho && !clMatchWho(f)) state.clWho = '';
+  savePrefs(); dirty.add('list');
+  toast(`Added to ${listOf(f.list).label}`, f.time ? `${fmtTime(f.time)} · ${f.title}` : f.title);
+  $('#cfTitle').focus();
+}
+async function saveItem(id){
+  const d = state.clDrafts[id]; if (!d) return;
+  const f = itemFields(d);
+  if (!f.title){ toast('Name needed', 'Say what the item is before saving.'); return; }
+  const ok = await guarded('c:'+id, () => db.doc('checklist/' + id).update(f));
+  if (ok) closeClEdit(id);
+}
+async function removeItem(id){
+  state.confirm = null;
+  const ok = await guarded('c:'+id, () => db.doc('checklist/' + id).delete());
+  if (ok) closeClEdit(id);
+}
 async function updateGuest(id, patch){ await guarded('g:'+id, () => db.doc('guests/' + id).update(patch)); }
 async function saveGuest(id){
   const d = state.drafts[id]; if (!d) return;
@@ -1250,6 +1493,7 @@ async function addExp(ev){
 function opt(list, sel){ return list.map(x => h('option',{value:x.key, selected:x.key === sel}, x.label)); }
 function fillStatic(){
   $('#tfStream').replaceChildren(...opt(STREAMS,'night'));
+  $('#cfList').replaceChildren(...opt(CHECK_LISTS,'lead'));
   $('#gfGroup').replaceChildren(...opt(GROUPS,'friends'));
   $('#gfStatus').replaceChildren(...opt(STATUSES,'todo'));
   $('#gGroupF').replaceChildren(h('option',{value:''},'All groups'), ...opt(GROUPS));
@@ -1277,11 +1521,21 @@ function bindStatic(){
     });
   });
   $$('[data-goto]').forEach(b => b.addEventListener('click', () => { setTab(b.dataset.goto); $('.tabs').scrollIntoView({behavior:reduceMotion() ? 'auto' : 'smooth'}); }));
-  $$('.board-head .seg button').forEach(b => b.addEventListener('click', () => { state.view = b.dataset.view; savePrefs(); dirty.add('board'); schedule(); }));
+  $$('#p-board .board-head .seg button').forEach(b => b.addEventListener('click', () => { state.view = b.dataset.view; savePrefs(); dirty.add('board'); schedule(); }));
   $('#hideDone').addEventListener('change', e => { state.hideDone = e.target.checked; savePrefs(); dirty.add('board'); schedule(); });
   $('#addTaskBtn').addEventListener('click', () => { const f = $('#taskForm'); f.hidden = !f.hidden; $('#addTaskBtn').setAttribute('aria-expanded', String(!f.hidden)); if (!f.hidden) $('#tfTitle').focus(); });
   $('#tfCancel').addEventListener('click', () => { $('#taskForm').hidden = true; $('#addTaskBtn').setAttribute('aria-expanded','false'); });
   $('#taskForm').addEventListener('submit', addTask);
+  $$('#clView button').forEach(b => b.addEventListener('click', () => { state.clView = b.dataset.cl; savePrefs(); dirty.add('list'); schedule(); }));
+  $('#clHide').addEventListener('change', e => { state.clHide = e.target.checked; savePrefs(); dirty.add('list'); schedule(); });
+  $('#clWho').addEventListener('change', e => { state.clWho = e.target.value; savePrefs(); dirty.add('list'); schedule(); });
+  $('#clAddBtn').addEventListener('click', () => { if ($('#clForm').hidden) openClForm(state.clView === 'all' ? null : state.clView); else { $('#clForm').hidden = true; $('#clAddBtn').setAttribute('aria-expanded','false'); } });
+  $('#cfCancel').addEventListener('click', () => { $('#clForm').hidden = true; $('#clAddBtn').setAttribute('aria-expanded','false'); });
+  $('#cfList').addEventListener('change', e => { $('#cfVotes').value = String(listOf(e.target.value).votes); });
+  $('#clForm').addEventListener('submit', addItem);
+  $('#clList').addEventListener('focusout', () => setTimeout(() => { if (dirty.has('list')) schedule(); }, 0));
+  $('#clCopy').addEventListener('click', () => copyText(checklistText(), 'Checklist'));
+  if ($('#clPrint')) $('#clPrint').addEventListener('click', () => runPrint(buildChecklistSheet()));
   $('#guestForm').addEventListener('submit', addGuest);
   $('#pasteBtn').addEventListener('click', pasteGuests);
   $('#gSearch').addEventListener('input', () => { dirty.add('guests'); schedule(); });
@@ -1324,7 +1578,7 @@ function bindStatic(){
     $('#resetBtn').addEventListener('click', resetData);
   }
 }
-const RENDER = {board:renderBoard, guests:renderGuests, menu:renderMenu, budget:renderBudget, room:renderRoom};
+const RENDER = {board:renderBoard, list:renderChecklist, guests:renderGuests, menu:renderMenu, budget:renderBudget, room:renderRoom};
 
 /* ---------- live data ---------- */
 function dbErr(e){
@@ -1337,6 +1591,13 @@ function subscribe(){
     state.tasks = snap.docs.map(cleanTask); state.loaded.tasks = true;
     if (!first) for (const t of state.tasks){ const p = prev.get(t.id); if (p && !p.done && t.done){ if (mine.has(t.id)) mine.delete(t.id); else announceRemote(t); } }
     changed('board');
+  }, dbErr);
+  db.collection('checklist').onSnapshot(snap => {
+    const prev = new Map(state.checklist.map(t => [t.id, t])), first = !state.loaded.checklist;
+    state.checklist = snap.docs.map(cleanItem); state.loaded.checklist = true;
+    if (state.clEditing && !state.checklist.some(t => t.id === state.clEditing)){ delete state.clDrafts[state.clEditing]; state.clEditing = null; }
+    if (!first) for (const t of state.checklist){ const p = prev.get(t.id); if (p && !p.done && t.done){ if (mine.has(t.id)) mine.delete(t.id); else announceRemoteItem(t); } }
+    changed('list');
   }, dbErr);
   db.collection('guests').onSnapshot(snap => { state.guests = snap.docs.map(cleanGuest); state.loaded.guests = true; changed('guests','budget'); }, dbErr);
   db.collection('picks').onSnapshot(snap => { const o = {}; snap.docs.forEach(d => { o[d.id] = cleanPick(d); }); state.picks = o; state.loaded.picks = true; changed('menu','budget','room'); }, dbErr);
@@ -1372,7 +1633,8 @@ function renderModeUI(){
   const tools = $('#dataTools'); if (tools) tools.hidden = !local;
   const pt = $('#printTools'); if (pt) pt.hidden = !local;
   const pa = $('#printAv'); if (pa) pa.hidden = !local;
-  const pb = $('#printBudgetTools'); if (pb) pb.hidden = !local;   // the Claude viewer can't open a print window
+  const pb = $('#printBudgetTools'); if (pb) pb.hidden = !local;
+  const pc = $('#clPrint'); if (pc) pc.hidden = !local;   // the Claude viewer can't open a print window
   const hint = $('#shareHint'); if (hint && local) hint.textContent = 'Saved in this browser. Export a backup at the bottom of the page to move it or share it.';
 }
 function exportData(){
@@ -1393,7 +1655,7 @@ function importData(file){
       state.quietUntil = Date.now() + 1500; state.editing = null; state.drafts = {};
       LocalStore.replace(obj);
       const n = o => (o && typeof o === 'object') ? Object.keys(o).length : 0;
-      toast('Backup imported', `${n(obj.tasks)} to-dos · ${n(obj.guests)} guests · ${n(obj.expenses)} costs`);
+      toast('Backup imported', `${n(obj.tasks)} to-dos · ${n(obj.checklist)} checklist items · ${n(obj.guests)} guests · ${n(obj.expenses)} costs`);
     } catch(e){ toast("Couldn't import", (e && e.message) || 'That file is not a watch party backup.'); }
     $('#importFile').value = '';
   };
@@ -1410,13 +1672,13 @@ function resetData(){
   }
   clearTimeout(resetArmed); resetArmed = 0; btn.textContent = 'Reset to starting data';
   state.quietUntil = Date.now() + 1500; state.editing = null; state.drafts = {};
-  LocalStore.reset(); toast('Reset', 'Back to the starting to-dos, guests and costs.');
+  LocalStore.reset(); toast('Reset', 'Back to the starting to-dos, checklist, guests and costs.');
 }
 function boot(){
   loadPrefs();
   const hash = (location.hash || '').slice(1); if (TABS.includes(hash)) state.tab = hash;
   fillStatic(); bindStatic(); applyTab(); renderSteps(); renderAll(); tickCountdown();
-  setInterval(tickCountdown, 30000);
+  setInterval(() => { tickCountdown(); if (eventNow() !== null && state.tab === 'list'){ dirty.add('list'); schedule(); } }, 30000);
   connect();
 }
 boot();
