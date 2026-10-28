@@ -496,3 +496,37 @@ details.msec:not([open]){margin-top:12px}
 details.msec[open] .chev{transform:translateY(2px) rotate(-135deg)}
 .openclose{font-size:13px;color:var(--muted);white-space:nowrap}
 .av-oc{margin:18px 0 0;text-align:right}
+
+/* Checklist: leading up, day of, grab & bring */
+.cl-tools{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;margin:14px 0 4px}
+.cl-tools select{width:auto;flex:0 1 200px}
+.cl-tools-r{margin-left:auto;display:flex;flex-wrap:wrap;gap:8px}
+#p-list .board-head{margin-bottom:6px}
+#p-list .seg button{white-space:nowrap}
+.cl-sec{margin-top:6px}
+.cl-sec .grp{margin-bottom:0}
+.cl-sec .grp .linkbtn{font-family:var(--font-body);text-transform:none;letter-spacing:0;font-size:13px}
+.cl-bar{height:6px;background:var(--brand-soft);margin:0 0 4px}
+.cl-bar i{display:block;height:100%;width:0;background:var(--brand);transition:width .6s}
+.cl-day .cl-bar{background:var(--red-soft)}
+.cl-day .cl-bar i{background:var(--red)}
+.task.cl{grid-template-columns:auto minmax(0,1fr) auto auto}
+.task.cl .linkbtn{padding-top:2px}
+.cl-time{font-family:var(--font-mono);font-weight:600;font-size:12px;letter-spacing:.04em;color:var(--red-ink);margin-bottom:2px}
+.is-done .cl-time{color:var(--muted);text-decoration:line-through}
+.is-done .t-detail{text-decoration:line-through;text-decoration-color:var(--line-strong)}
+.task.is-next{box-shadow:inset 3px 0 0 var(--brand);padding-left:10px}
+.cl-next{font-family:var(--font-mono);text-transform:uppercase;letter-spacing:.05em;padding:2px 6px;background:var(--brand);color:var(--on-brand)}
+.cl-edit{list-style:none;padding:12px 0;border-bottom:1px solid var(--line)}
+.cl-sec .empty{margin-top:8px}
+@media (max-width:700px){
+  .cl-tools-r{margin-left:0;width:100%}
+  #p-list .board-head .seg{width:100%;overflow-x:auto}
+  #p-list .board-head .seg button{flex:1 0 auto}
+}
+@media print{
+  .ps-cl td{vertical-align:top}
+  .ps-cl td.tl{text-align:left;font-family:var(--font-mono);font-size:8pt;white-space:nowrap}
+  .ps-box{display:inline-block;width:10pt;height:10pt;border:1pt solid #111;text-align:center;line-height:9pt;font-size:8pt;font-weight:700;color:#522A77}
+  .ps-cl tr.done td:nth-child(n+2){color:#777;text-decoration:line-through}
+}
