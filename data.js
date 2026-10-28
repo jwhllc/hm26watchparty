@@ -6,6 +6,11 @@ const STREAMS = [
   {key:'guests', label:'Guests',            short:'Guests'},
   {key:'night',  label:'The night',         short:'The night'},
 ];
+const CHECK_LISTS = [
+  {key:'lead', label:'Leading up',   sub:'Before Nov 3',              votes:20},
+  {key:'day',  label:'Day of',       sub:'Tue, Nov 3 · in time order', votes:20},
+  {key:'grab', label:'Grab & bring', sub:'Pick up, pack and bring',    votes:10},
+];
 const GROUPS = [
   {key:'candidate',  label:'Candidate & family'},
   {key:'team',       label:'Campaign team'},
