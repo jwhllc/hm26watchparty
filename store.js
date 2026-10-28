@@ -6,11 +6,12 @@
   so the same app code can also run against a shared backend later.
 
   Data shape (also the backup file format):
-  { tasks: {id: {...}}, guests: {...}, picks: {...}, expenses: {...}, settings: {budget: {...}} }
+  { tasks: {id: {...}}, guests: {...}, picks: {...}, expenses: {...}, checklist: {...},
+    settings: {budget: {...}, meta: {...}} }
 */
 const LocalStore = (() => {
   const KEY = 'hm26-watch-party:data:v1';
-  const COLLECTIONS = ['tasks', 'guests', 'picks', 'expenses', 'settings'];
+  const COLLECTIONS = ['tasks', 'guests', 'picks', 'expenses', 'checklist', 'settings'];
   const ID_RE = /^[A-Za-z0-9_\-.~:@+]{1,200}$/;
   const listeners = new Set();
   let data = null;
@@ -22,11 +23,23 @@ const LocalStore = (() => {
 
   function fromSeed() {
     const d = blank();
-    for (const c of ['tasks', 'guests', 'expenses']) {
+    for (const c of ['tasks', 'guests', 'expenses', 'checklist']) {
       (SEED[c] || []).forEach(({ id, ...doc }) => { d[c][id] = clone(doc); });
     }
     d.settings.budget = clone(SEED.settings || {});
+    d.settings.meta = { checklistSeeded: true };
     return d;
+  }
+
+  // Browsers that saved data before the Checklist tab existed get the starter items once.
+  function upgrade() {
+    const meta = data.settings.meta || {};
+    if (meta.checklistSeeded) return false;
+    if (!Object.keys(data.checklist).length) {
+      (SEED.checklist || []).forEach(({ id, ...doc }) => { data.checklist[id] = clone(doc); });
+    }
+    data.settings.meta = Object.assign({}, meta, { checklistSeeded: true });
+    return true;
   }
 
   // Accepts anything; keeps only well-formed collections and documents.
@@ -53,7 +66,7 @@ const LocalStore = (() => {
   function load() {
     try {
       const raw = localStorage.getItem(KEY);
-      if (raw) { data = normalize(JSON.parse(raw)); return; }
+      if (raw) { data = normalize(JSON.parse(raw)); if (upgrade()) save(); return; }
     } catch (e) { /* unreadable or blocked: fall back to the starting data */ }
     data = fromSeed();
     save();
@@ -112,7 +125,7 @@ const LocalStore = (() => {
     open() { if (!data) load(); return Object.freeze({ doc, collection }); },
     get persistent() { return persistent; },
     dump() { return Object.assign({ app: 'hm26-watch-party', version: 1, exportedAt: new Date().toISOString() }, clone(data)); },
-    replace(obj) { data = normalize(obj); save(); emit(); },
+    replace(obj) { data = normalize(obj); upgrade(); save(); emit(); },
     reset() { data = fromSeed(); save(); emit(); },
   };
 })();
